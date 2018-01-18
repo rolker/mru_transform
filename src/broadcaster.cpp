@@ -26,6 +26,7 @@ static tf2_ros::TransformBroadcaster * broadcaster = nullptr;
 ros::Publisher position_map_pub;
 ros::Publisher position_utm_pub;
 //ros::Publisher position_ecef_pub;
+ros::Publisher origin_pub;
 
 double heading = 0.0;
 
@@ -147,6 +148,16 @@ void headingCallback(const mission_plan::NavEulerStamped::ConstPtr& inmsg)
     heading = inmsg->orientation.heading;
 }
 
+void originCallback(const ros::WallTimerEvent& event)
+{
+    if(initializedLocalReference)
+    {
+        geographic_msgs::GeoPoint gp;
+        gp.latitude = LatOrigin;
+        gp.longitude = LongOrigin;
+        origin_pub.publish(gp);
+    }
+}
 
 
 int main(int argc, char **argv)
@@ -164,6 +175,9 @@ int main(int argc, char **argv)
     position_map_pub = n.advertise<geometry_msgs::PoseStamped>("/position_map",10);
     position_utm_pub = n.advertise<geometry_msgs::PoseStamped>("/position_utm",10);
     //position_ecef_pub = n.advertise<geometry_msgs::PoseStamped>("/position_ecef",10);
+    origin_pub = n.advertise<geographic_msgs::GeoPoint>("/origin",1);
+
+    ros::WallTimer originTimer = n.createWallTimer(ros::WallDuration(1.0),originCallback);
 
     ros::spin();
     return 0;
