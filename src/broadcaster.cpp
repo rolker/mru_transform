@@ -8,6 +8,7 @@
 #include "mission_plan/NavEulerStamped.h"
 #include "project11/gz4d_geo.h"
 #include <geodesy/utm.h>
+#include "project11_transformations/LatLongToEarth.h"
 
 
 double LatOrigin  = 0.0;
@@ -142,6 +143,21 @@ void positionCallback(const geographic_msgs::GeoPointStamped::ConstPtr& inmsg)
     
 }
 
+bool ll2earth(project11_transformations::LatLongToEarth::Request &req, project11_transformations::LatLongToEarth::Response &res)
+{
+     gz4d::geo::Point<double,gz4d::geo::WGS84::LatLon> p_ll(req.wgs84.position.latitude,req.wgs84.position.longitude,req.wgs84.position.altitude);
+     gz4d::geo::Point<double, gz4d::geo::WGS84::ECEF> p_ecef(p_ll);
+     res.earth.header.frame_id = "earth";
+     res.earth.header.stamp = req.wgs84.header.stamp;
+     res.earth.point.x = p_ecef[0];
+     res.earth.point.y = p_ecef[1];
+     res.earth.point.z = p_ecef[2];
+     return true;
+}
+
+
+
+
 void headingCallback(const mission_plan::NavEulerStamped::ConstPtr& inmsg)
 {
     double t = inmsg->header.stamp.toSec();
@@ -178,6 +194,8 @@ int main(int argc, char **argv)
     origin_pub = n.advertise<geographic_msgs::GeoPoint>("/origin",1);
 
     ros::WallTimer originTimer = n.createWallTimer(ros::WallDuration(1.0),originCallback);
+    
+    ros::ServiceServer service = n.advertiseService("wgs84_to_earth",ll2earth);
 
     ros::spin();
     return 0;
