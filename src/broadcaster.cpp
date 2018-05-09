@@ -5,7 +5,7 @@
 #include <tf2/LinearMath/Quaternion.h>
 #include "geographic_msgs/GeoPointStamped.h"
 #include "geographic_msgs/GeoPoint.h"
-#include "mission_plan/NavEulerStamped.h"
+#include "marine_msgs/NavEulerStamped.h"
 #include "project11/gz4d_geo.h"
 #include <geodesy/utm.h>
 #include "project11_transformations/LatLongToEarth.h"
@@ -158,7 +158,7 @@ bool ll2earth(project11_transformations::LatLongToEarth::Request &req, project11
 
 
 
-void headingCallback(const mission_plan::NavEulerStamped::ConstPtr& inmsg)
+void headingCallback(const marine_msgs::NavEulerStamped::ConstPtr& inmsg)
 {
     double t = inmsg->header.stamp.toSec();
     heading = inmsg->orientation.heading;
