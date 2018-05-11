@@ -53,20 +53,20 @@
   <build_depend>roscpp</build_depend>
   <build_depend>tf2</build_depend>
   <build_depend>tf2_ros</build_depend>
-  <build_depend>mission_plan</build_depend>
+  <build_depend>marine_msgs</build_depend>
   <build_depend>message_generation</build_depend>
   <build_depend>geodesy</build_depend>
   <build_export_depend>project11</build_export_depend>
   <build_export_depend>roscpp</build_export_depend>
   <build_export_depend>tf2</build_export_depend>
   <build_export_depend>tf2_ros</build_export_depend>
-  <build_export_depend>mission_plan</build_export_depend>
+  <build_export_depend>marine_msgs</build_export_depend>
   <build_export_depend>geodesy</build_export_depend>
   <exec_depend>project11</exec_depend>
   <exec_depend>roscpp</exec_depend>
   <exec_depend>tf2</exec_depend>
   <exec_depend>tf2_ros</exec_depend>
-  <exec_depend>mission_plan</exec_depend>
+  <exec_depend>marine_msgs</exec_depend>
   <exec_depend>message_runtime</exec_depend>
   <exec_depend>geodesy</exec_depend>
 
