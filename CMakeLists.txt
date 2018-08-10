@@ -15,6 +15,7 @@ find_package(catkin REQUIRED COMPONENTS
   marine_msgs
   geodesy
   message_generation
+  nav_msgs
 )
 
 ## System dependencies are found with CMake's conventions

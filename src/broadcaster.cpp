@@ -9,6 +9,7 @@
 #include "project11/gz4d_geo.h"
 #include <geodesy/utm.h>
 #include "project11_transformations/LatLongToEarth.h"
+#include <nav_msgs/Odometry.h>
 
 
 double LatOrigin  = 0.0;
@@ -28,8 +29,14 @@ ros::Publisher position_map_pub;
 ros::Publisher position_utm_pub;
 //ros::Publisher position_ecef_pub;
 ros::Publisher origin_pub;
+ros::Publisher odom_pub;
 
 double heading = 0.0;
+ros::Time last_heading_timestamp;
+double rotation_speed = 0.0;
+
+gz4d::Point<double> last_position;
+ros::Time last_timestamp;
 
 void initializeLocalReference(const geographic_msgs::GeoPointStamped::ConstPtr& inmsg)
 {
@@ -118,14 +125,6 @@ void positionCallback(const geographic_msgs::GeoPointStamped::ConstPtr& inmsg)
 
     position_map_pub.publish(ps);
     
-    geodesy::UTMPoint p_utm;
-    geodesy::fromMsg(inmsg->position,p_utm);
-    ps.header.frame_id = "utm";
-    ps.pose.position.x = p_utm.easting;
-    ps.pose.position.y = p_utm.northing;
-    ps.pose.position.z = p_utm.altitude;
-    
-    position_utm_pub.publish(ps);
     
 //     gz4d::geo::Point<double,gz4d::geo::WGS84::LatLon> p_ll(inmsg->position.latitude,inmsg->position.longitude,inmsg->position.altitude);
 //     gz4d::geo::Point<double, gz4d::geo::WGS84::ECEF> p_ecef(p_ll);
@@ -139,7 +138,31 @@ void positionCallback(const geographic_msgs::GeoPointStamped::ConstPtr& inmsg)
 //     quaternionTFToMsg(earth_to_map_rotation*rq,ps_ecef.pose.orientation);
 //     
 //     position_ecef_pub.publish(ps_ecef);
+    if(last_timestamp.isValid())
+    {
+        nav_msgs::Odometry odom;
+        odom.header.stamp = inmsg->header.stamp;
+        odom.header.frame_id = "odom";
+        odom.pose.pose = ps.pose;
+        odom.child_frame_id = "base_link";
+        ros::Duration dt = inmsg->header.stamp - last_timestamp;
+        odom.twist.twist.linear.x = (position[0] - last_position[0])/dt.toSec();
+        odom.twist.twist.linear.y = (position[1] - last_position[1])/dt.toSec();
+        odom.twist.twist.angular.z = rotation_speed;
+        odom_pub.publish(odom);
+    }
     
+    last_position = position;
+    last_timestamp = inmsg->header.stamp;
+
+    geodesy::UTMPoint p_utm;
+    geodesy::fromMsg(inmsg->position,p_utm);
+    ps.header.frame_id = "utm";
+    ps.pose.position.x = p_utm.easting;
+    ps.pose.position.y = p_utm.northing;
+    ps.pose.position.z = p_utm.altitude;
+    
+    position_utm_pub.publish(ps);
     
 }
 
@@ -160,8 +183,15 @@ bool ll2earth(project11_transformations::LatLongToEarth::Request &req, project11
 
 void headingCallback(const marine_msgs::NavEulerStamped::ConstPtr& inmsg)
 {
-    double t = inmsg->header.stamp.toSec();
+    //double t = inmsg->header.stamp.toSec();
+    if(last_heading_timestamp.isValid())
+    {
+        rotation_speed = ((inmsg->orientation.heading - heading)/(inmsg->header.stamp - last_heading_timestamp).toSec())*M_PI/180.0;
+    }
+    
     heading = inmsg->orientation.heading;
+    last_heading_timestamp = inmsg->header.stamp;
+    
 }
 
 void originCallback(const ros::WallTimerEvent& event)
@@ -192,6 +222,7 @@ int main(int argc, char **argv)
     position_utm_pub = n.advertise<geometry_msgs::PoseStamped>("/position_utm",10);
     //position_ecef_pub = n.advertise<geometry_msgs::PoseStamped>("/position_ecef",10);
     origin_pub = n.advertise<geographic_msgs::GeoPoint>("/origin",1);
+    odom_pub = n.advertise<nav_msgs::Odometry>("odom",50);
 
     ros::WallTimer originTimer = n.createWallTimer(ros::WallDuration(1.0),originCallback);
     
