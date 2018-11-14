@@ -9,6 +9,7 @@
 #include "project11/gz4d_geo.h"
 #include <geodesy/utm.h>
 #include "project11_transformations/LatLongToEarth.h"
+#include "project11_transformations/LatLongToMap.h"
 #include <nav_msgs/Odometry.h>
 
 
@@ -37,6 +38,26 @@ double rotation_speed = 0.0;
 
 gz4d::Point<double> last_position;
 ros::Time last_timestamp;
+
+ros::ServiceServer map_service;
+
+ros::NodeHandle *node;
+
+bool ll2map(project11_transformations::LatLongToMap::Request &req, project11_transformations::LatLongToMap::Response &res)
+{
+    gz4d::geo::Point<double,gz4d::geo::WGS84::LatLon> p_ll(req.wgs84.position.latitude,req.wgs84.position.longitude,req.wgs84.position.altitude);
+    gz4d::geo::Point<double, gz4d::geo::WGS84::ECEF> p_ecef(p_ll);
+
+    gz4d::Point<double> position = geoReference.toLocal(p_ecef);
+    
+    res.map.header.frame_id = "map";
+    res.map.header.stamp = req.wgs84.header.stamp;
+    res.map.point.x = position[0];
+    res.map.point.y = position[1];
+    res.map.point.z = position[2];
+    return true;
+}
+
 
 void initializeLocalReference(const geographic_msgs::GeoPointStamped::ConstPtr& inmsg)
 {
@@ -82,6 +103,18 @@ void initializeLocalReference(const geographic_msgs::GeoPointStamped::ConstPtr& 
     map_to_odom.child_frame_id = "odom";
     map_to_odom.transform.rotation.w = 1.0;
     static_broadcaster->sendTransform(map_to_odom);
+
+    //todo: read offsets from parameter server
+    geometry_msgs::TransformStamped base_link_to_mbes;
+    base_link_to_mbes.header.stamp = ros::Time::now();
+    base_link_to_mbes.header.frame_id = "base_link";
+    base_link_to_mbes.child_frame_id = "mbes";
+    base_link_to_mbes.transform.rotation.w = 1.0;
+
+    static_broadcaster->sendTransform(base_link_to_mbes);
+    
+    map_service = node->advertiseService("wgs84_to_map",ll2map);
+
     
     initializedLocalReference = true;
 }
@@ -210,23 +243,38 @@ int main(int argc, char **argv)
 {
     ros::init(argc, argv, "project11_transformation_node");
     
+    node = new ros::NodeHandle();
+    
+    std::string role;
+    node->param<std::string>("/project11/role", role, "unknown");
+    std::cerr << "role: " << role << std::endl;
+    
     static_broadcaster = new tf2_ros::StaticTransformBroadcaster;
     broadcaster = new tf2_ros::TransformBroadcaster;
-    
-    ros::NodeHandle n;
 
-    ros::Subscriber psub = n.subscribe("/position",10,positionCallback);
-    ros::Subscriber hsub = n.subscribe("/heading",10,headingCallback);
+    ros::Subscriber psub;
+    ros::Subscriber hsub;
+
+    if(role == "operator" || role == "observer")
+    {
+        psub = node->subscribe("/udp/position",10,positionCallback);
+        hsub = node->subscribe("/udp/heading",10,headingCallback);
+    }
+    else
+    {    
+        psub = node->subscribe("/position",10,positionCallback);
+        hsub = node->subscribe("/heading",10,headingCallback);
+    }
     
-    position_map_pub = n.advertise<geometry_msgs::PoseStamped>("/position_map",10);
-    position_utm_pub = n.advertise<geometry_msgs::PoseStamped>("/position_utm",10);
+    position_map_pub = node->advertise<geometry_msgs::PoseStamped>("/position_map",10);
+    position_utm_pub = node->advertise<geometry_msgs::PoseStamped>("/position_utm",10);
     //position_ecef_pub = n.advertise<geometry_msgs::PoseStamped>("/position_ecef",10);
-    origin_pub = n.advertise<geographic_msgs::GeoPoint>("/origin",1);
-    odom_pub = n.advertise<nav_msgs::Odometry>("odom",50);
+    origin_pub = node->advertise<geographic_msgs::GeoPoint>("/origin",1);
+    odom_pub = node->advertise<nav_msgs::Odometry>("odom",50);
 
-    ros::WallTimer originTimer = n.createWallTimer(ros::WallDuration(1.0),originCallback);
+    ros::WallTimer originTimer = node->createWallTimer(ros::WallDuration(1.0),originCallback);
     
-    ros::ServiceServer service = n.advertiseService("wgs84_to_earth",ll2earth);
+    ros::ServiceServer service = node->advertiseService("wgs84_to_earth",ll2earth);
 
     ros::spin();
     return 0;
