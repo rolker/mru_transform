@@ -16,7 +16,7 @@
 double LatOrigin  = 0.0;
 double LongOrigin = 0.0;
 
-gz4d::geo::LocalENU<> geoReference;
+gz4d::LocalENU geoReference;
 geodesy::UTMPoint geoReferenceUTM;
 
 tf::Quaternion earth_to_map_rotation;
@@ -45,9 +45,9 @@ ros::NodeHandle *node;
 
 bool ll2map(project11_transformations::LatLongToMap::Request &req, project11_transformations::LatLongToMap::Response &res)
 {
-    gz4d::geo::Point<double,gz4d::geo::WGS84::LatLon> p_ll(req.wgs84.position.latitude,req.wgs84.position.longitude,req.wgs84.position.altitude);
-    gz4d::geo::Point<double, gz4d::geo::WGS84::ECEF> p_ecef(p_ll);
-
+    gz4d::GeoPointLatLong p_ll(req.wgs84.position.latitude,req.wgs84.position.longitude,req.wgs84.position.altitude);
+    gz4d::GeoPointECEF p_ecef(p_ll);
+    
     gz4d::Point<double> position = geoReference.toLocal(p_ecef);
     
     res.map.header.frame_id = "map";
@@ -61,8 +61,8 @@ bool ll2map(project11_transformations::LatLongToMap::Request &req, project11_tra
 
 void initializeLocalReference(const geographic_msgs::GeoPointStamped::ConstPtr& inmsg)
 {
-    gz4d::geo::Point<double,gz4d::geo::WGS84::LatLon> gr(LatOrigin,LongOrigin,0.0);
-    geoReference = gz4d::geo::LocalENU<>(gr);
+    gz4d::GeoPointLatLong gr(LatOrigin,LongOrigin,0.0);
+    geoReference = gz4d::LocalENU(gr);
     geographic_msgs::GeoPoint gp;
     gp = inmsg->position;
     geodesy::fromMsg(gp,geoReferenceUTM);
@@ -83,7 +83,7 @@ void initializeLocalReference(const geographic_msgs::GeoPointStamped::ConstPtr& 
     static_transformStamped_earth_to_map.header.frame_id = "earth";
     static_transformStamped_earth_to_map.child_frame_id = "map";
     
-    gz4d::geo::Point<double, gz4d::geo::WGS84::ECEF> originECEF(gr);
+    gz4d::GeoPointECEF originECEF(gr);
     static_transformStamped_earth_to_map.transform.translation.x = originECEF[0];
     static_transformStamped_earth_to_map.transform.translation.y = originECEF[1];
     static_transformStamped_earth_to_map.transform.translation.z = originECEF[2];
@@ -129,7 +129,7 @@ void positionCallback(const geographic_msgs::GeoPointStamped::ConstPtr& inmsg)
     }
     //double t = inmsg->header.stamp.toSec();
     
-    gz4d::Point<double> position = geoReference.toLocal(gz4d::geo::Point<double,gz4d::geo::WGS84::ECEF>(gz4d::geo::Point<double,gz4d::geo::WGS84::LatLon>(inmsg->position.latitude,inmsg->position.longitude,0.0)));
+    gz4d::Point<double> position = geoReference.toLocal(gz4d::GeoPointECEF(gz4d::GeoPointECEF(inmsg->position.latitude,inmsg->position.longitude,0.0)));
     
     geometry_msgs::TransformStamped odom_to_base_link;
     odom_to_base_link.header.stamp = inmsg->header.stamp;
@@ -201,8 +201,8 @@ void positionCallback(const geographic_msgs::GeoPointStamped::ConstPtr& inmsg)
 
 bool ll2earth(project11_transformations::LatLongToEarth::Request &req, project11_transformations::LatLongToEarth::Response &res)
 {
-     gz4d::geo::Point<double,gz4d::geo::WGS84::LatLon> p_ll(req.wgs84.position.latitude,req.wgs84.position.longitude,req.wgs84.position.altitude);
-     gz4d::geo::Point<double, gz4d::geo::WGS84::ECEF> p_ecef(p_ll);
+     gz4d::GeoPointLatLong p_ll(req.wgs84.position.latitude,req.wgs84.position.longitude,req.wgs84.position.altitude);
+     gz4d::GeoPointECEF p_ecef(p_ll);
      res.earth.header.frame_id = "earth";
      res.earth.header.stamp = req.wgs84.header.stamp;
      res.earth.point.x = p_ecef[0];
