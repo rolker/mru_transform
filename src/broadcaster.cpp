@@ -129,7 +129,7 @@ void positionCallback(const geographic_msgs::GeoPointStamped::ConstPtr& inmsg)
     }
     //double t = inmsg->header.stamp.toSec();
     
-    gz4d::Point<double> position = geoReference.toLocal(gz4d::GeoPointECEF(gz4d::GeoPointECEF(inmsg->position.latitude,inmsg->position.longitude,0.0)));
+    gz4d::Point<double> position = geoReference.toLocal(gz4d::GeoPointECEF(gz4d::GeoPointLatLong(inmsg->position.latitude,inmsg->position.longitude,0.0)));
     
     geometry_msgs::TransformStamped odom_to_base_link;
     odom_to_base_link.header.stamp = inmsg->header.stamp;
