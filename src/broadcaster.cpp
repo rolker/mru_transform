@@ -10,8 +10,9 @@
 #include <geodesy/utm.h>
 #include "project11_transformations/LatLongToEarth.h"
 #include "project11_transformations/LatLongToMap.h"
+#include "project11_transformations/EarthToLatLong.h"
+#include "project11_transformations/MapToLatLong.h"
 #include <nav_msgs/Odometry.h>
-
 
 double LatOrigin  = 0.0;
 double LongOrigin = 0.0;
@@ -28,7 +29,6 @@ static tf2_ros::TransformBroadcaster * broadcaster = nullptr;
 
 ros::Publisher position_map_pub;
 ros::Publisher position_utm_pub;
-//ros::Publisher position_ecef_pub;
 ros::Publisher origin_pub;
 ros::Publisher odom_pub;
 
@@ -39,7 +39,8 @@ double rotation_speed = 0.0;
 gz4d::Point<double> last_position;
 ros::Time last_timestamp;
 
-ros::ServiceServer map_service;
+ros::ServiceServer wgs84_to_map_service;
+ros::ServiceServer map_to_wgs84_service;
 
 ros::NodeHandle *node;
 
@@ -58,6 +59,45 @@ bool ll2map(project11_transformations::LatLongToMap::Request &req, project11_tra
     return true;
 }
 
+bool map2ll(project11_transformations::MapToLatLong::Request &req, project11_transformations::MapToLatLong::Response &res)
+{
+    gz4d::Point<double> position(req.map.point.x,req.map.point.y,req.map.point.z);
+    auto latlon = geoReference.toLatLong(position);
+    res.wgs84.position.latitude = latlon[0];
+    res.wgs84.position.longitude = latlon[1];
+    res.wgs84.position.altitude = latlon[2];
+    
+    res.wgs84.header.frame_id = "wgs84";
+    res.wgs84.header.stamp = req.map.header.stamp;
+    return true;
+}
+
+bool ll2earth(project11_transformations::LatLongToEarth::Request &req, project11_transformations::LatLongToEarth::Response &res)
+{
+    gz4d::GeoPointLatLong p_ll(req.wgs84.position.latitude,req.wgs84.position.longitude,req.wgs84.position.altitude);
+    gz4d::GeoPointECEF p_ecef(p_ll);
+    res.earth.header.frame_id = "earth";
+    res.earth.header.stamp = req.wgs84.header.stamp;
+    res.earth.point.x = p_ecef[0];
+    res.earth.point.y = p_ecef[1];
+    res.earth.point.z = p_ecef[2];
+    return true;
+}
+
+bool earth2ll(project11_transformations::EarthToLatLong::Request &req, project11_transformations::EarthToLatLong::Response &res)
+{
+    gz4d::GeoPointECEF p_ecef(req.earth.point.x,req.earth.point.y,req.earth.point.z);
+    gz4d::GeoPointLatLong p_ll(p_ecef);
+    
+    res.wgs84.header.frame_id = "wgs84";
+    res.wgs84.header.stamp = req.earth.header.stamp;
+    
+    res.wgs84.position.latitude = p_ll[0];
+    res.wgs84.position.longitude = p_ll[1];
+    res.wgs84.position.altitude = p_ll[2];
+    return true;
+
+}
 
 void initializeLocalReference(const geographic_msgs::GeoPointStamped::ConstPtr& inmsg)
 {
@@ -113,8 +153,8 @@ void initializeLocalReference(const geographic_msgs::GeoPointStamped::ConstPtr& 
 
     static_broadcaster->sendTransform(base_link_to_mbes);
     
-    map_service = node->advertiseService("wgs84_to_map",ll2map);
-
+    wgs84_to_map_service = node->advertiseService("wgs84_to_map",ll2map);
+    map_to_wgs84_service = node->advertiseService("map_to_wgs84",map2ll);
     
     initializedLocalReference = true;
 }
@@ -199,18 +239,6 @@ void positionCallback(const geographic_msgs::GeoPointStamped::ConstPtr& inmsg)
     
 }
 
-bool ll2earth(project11_transformations::LatLongToEarth::Request &req, project11_transformations::LatLongToEarth::Response &res)
-{
-     gz4d::GeoPointLatLong p_ll(req.wgs84.position.latitude,req.wgs84.position.longitude,req.wgs84.position.altitude);
-     gz4d::GeoPointECEF p_ecef(p_ll);
-     res.earth.header.frame_id = "earth";
-     res.earth.header.stamp = req.wgs84.header.stamp;
-     res.earth.point.x = p_ecef[0];
-     res.earth.point.y = p_ecef[1];
-     res.earth.point.z = p_ecef[2];
-     return true;
-}
-
 
 
 
@@ -268,13 +296,13 @@ int main(int argc, char **argv)
     
     position_map_pub = node->advertise<geometry_msgs::PoseStamped>("/position_map",10);
     position_utm_pub = node->advertise<geometry_msgs::PoseStamped>("/position_utm",10);
-    //position_ecef_pub = n.advertise<geometry_msgs::PoseStamped>("/position_ecef",10);
     origin_pub = node->advertise<geographic_msgs::GeoPoint>("/origin",1);
     odom_pub = node->advertise<nav_msgs::Odometry>("odom",50);
 
     ros::WallTimer originTimer = node->createWallTimer(ros::WallDuration(1.0),originCallback);
     
-    ros::ServiceServer service = node->advertiseService("wgs84_to_earth",ll2earth);
+    ros::ServiceServer wgs84_to_earth_service = node->advertiseService("wgs84_to_earth",ll2earth);
+    ros::ServiceServer earth_to_wgs84_service = node->advertiseService("earth_to_wgs84",earth2ll);
 
     ros::spin();
     return 0;

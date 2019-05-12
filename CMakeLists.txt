@@ -63,6 +63,8 @@ add_service_files(
   FILES
   LatLongToEarth.srv
   LatLongToMap.srv
+  EarthToLatLong.srv
+  MapToLatLong.srv
 )
 
 ## Generate actions in the 'action' folder

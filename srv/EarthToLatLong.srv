@@ -1,0 +1,3 @@
+geometry_msgs/PointStamped earth
+---
+geographic_msgs/GeoPointStamped wgs84
