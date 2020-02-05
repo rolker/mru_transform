@@ -1,26 +1,25 @@
 #include <ros/ros.h>
 #include <tf2_ros/static_transform_broadcaster.h>
 #include <tf2_ros/transform_broadcaster.h>
-#include <geometry_msgs/TransformStamped.h>
 #include <tf2/LinearMath/Quaternion.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
+#include <geometry_msgs/TransformStamped.h>
 #include "geographic_msgs/GeoPointStamped.h"
 #include "geographic_msgs/GeoPoint.h"
 #include "marine_msgs/NavEulerStamped.h"
 #include "project11/gz4d_geo.h"
-#include <geodesy/utm.h>
 #include "project11_transformations/LatLongToEarth.h"
 #include "project11_transformations/LatLongToMap.h"
 #include "project11_transformations/EarthToLatLong.h"
 #include "project11_transformations/MapToLatLong.h"
-#include <nav_msgs/Odometry.h>
+#include <sensor_msgs/NavSatFix.h>
 
 double LatOrigin  = 0.0;
 double LongOrigin = 0.0;
 
 gz4d::LocalENU geoReference;
-geodesy::UTMPoint geoReferenceUTM;
 
-tf::Quaternion earth_to_map_rotation;
+tf2::Quaternion earth_to_map_rotation;
 
 bool initializedLocalReference = false;
 
@@ -28,16 +27,13 @@ static tf2_ros::StaticTransformBroadcaster *static_broadcaster = nullptr;
 static tf2_ros::TransformBroadcaster * broadcaster = nullptr;
 
 ros::Publisher position_map_pub;
-ros::Publisher position_utm_pub;
 ros::Publisher origin_pub;
-ros::Publisher odom_pub;
 
-double heading = 0.0;
-ros::Time last_heading_timestamp;
-double rotation_speed = 0.0;
+geographic_msgs::GeoPointStamped last_gps_position;
+marine_msgs::NavEulerStamped last_heading;
 
-gz4d::Point<double> last_position;
-ros::Time last_timestamp;
+sensor_msgs::NavSatFix last_posmv_position;
+marine_msgs::NavEulerStamped last_posmv_orientation;
 
 ros::ServiceServer wgs84_to_map_service;
 ros::ServiceServer map_to_wgs84_service;
@@ -99,59 +95,31 @@ bool earth2ll(project11_transformations::EarthToLatLong::Request &req, project11
 
 }
 
-void initializeLocalReference(const geographic_msgs::GeoPointStamped::ConstPtr& inmsg)
+void initializeLocalReference(ros::Time stamp)
 {
     gz4d::GeoPointLatLong gr(LatOrigin,LongOrigin,0.0);
     geoReference = gz4d::LocalENU(gr);
-    geographic_msgs::GeoPoint gp;
-    gp = inmsg->position;
-    geodesy::fromMsg(gp,geoReferenceUTM);
-    
-    geometry_msgs::TransformStamped static_transformStamped_map_to_utm;
 
-    static_transformStamped_map_to_utm.header.stamp = ros::Time::now();
-    static_transformStamped_map_to_utm.header.frame_id = "map";
-    static_transformStamped_map_to_utm.child_frame_id = "utm";
-    static_transformStamped_map_to_utm.transform.translation.x = -geoReferenceUTM.easting;
-    static_transformStamped_map_to_utm.transform.translation.y = -geoReferenceUTM.northing;
-    static_transformStamped_map_to_utm.transform.rotation.w = 1.0;
-    
-    static_broadcaster->sendTransform(static_transformStamped_map_to_utm);
-
-    geometry_msgs::TransformStamped static_transformStamped_earth_to_map;
-    static_transformStamped_earth_to_map.header.stamp = ros::Time::now();
-    static_transformStamped_earth_to_map.header.frame_id = "earth";
-    static_transformStamped_earth_to_map.child_frame_id = "map";
+    geometry_msgs::TransformStamped transformStamped_earth_to_map;
+    transformStamped_earth_to_map.header.stamp = stamp;
+    transformStamped_earth_to_map.header.frame_id = "earth";
+    transformStamped_earth_to_map.child_frame_id = "map";
     
     gz4d::GeoPointECEF originECEF(gr);
-    static_transformStamped_earth_to_map.transform.translation.x = originECEF[0];
-    static_transformStamped_earth_to_map.transform.translation.y = originECEF[1];
-    static_transformStamped_earth_to_map.transform.translation.z = originECEF[2];
+    transformStamped_earth_to_map.transform.translation.x = originECEF[0];
+    transformStamped_earth_to_map.transform.translation.y = originECEF[1];
+    transformStamped_earth_to_map.transform.translation.z = originECEF[2];
     
-    tf::Quaternion longQuat = tf::createQuaternionFromRPY(0.0,0.0,(LongOrigin+90.0)*M_PI/180.0);
-    tf::Quaternion latQuat = tf::createQuaternionFromRPY((90-LatOrigin)*M_PI/180.0,0.0,0.0);
+    tf2::Quaternion longQuat;
+    longQuat.setRPY(0.0,0.0,(LongOrigin+90.0)*M_PI/180.0);
+    tf2::Quaternion latQuat;
+    latQuat.setRPY((90-LatOrigin)*M_PI/180.0,0.0,0.0);
     earth_to_map_rotation = longQuat*latQuat;
     
-    quaternionTFToMsg(earth_to_map_rotation,static_transformStamped_earth_to_map.transform.rotation);
+    transformStamped_earth_to_map.transform.rotation = tf2::toMsg(earth_to_map_rotation);
     
+    broadcaster->sendTransform(transformStamped_earth_to_map);
     
-    static_broadcaster->sendTransform(static_transformStamped_earth_to_map);
-    
-    geometry_msgs::TransformStamped map_to_odom;
-    map_to_odom.header.stamp = ros::Time::now();
-    map_to_odom.header.frame_id = "map";
-    map_to_odom.child_frame_id = "odom";
-    map_to_odom.transform.rotation.w = 1.0;
-    static_broadcaster->sendTransform(map_to_odom);
-
-    //todo: read offsets from parameter server
-    geometry_msgs::TransformStamped base_link_to_mbes;
-    base_link_to_mbes.header.stamp = ros::Time::now();
-    base_link_to_mbes.header.frame_id = "base_link";
-    base_link_to_mbes.child_frame_id = "mbes";
-    base_link_to_mbes.transform.rotation.w = 1.0;
-
-    static_broadcaster->sendTransform(base_link_to_mbes);
     
     wgs84_to_map_service = node->advertiseService("wgs84_to_map",ll2map);
     map_to_wgs84_service = node->advertiseService("map_to_wgs84",map2ll);
@@ -159,34 +127,59 @@ void initializeLocalReference(const geographic_msgs::GeoPointStamped::ConstPtr& 
     initializedLocalReference = true;
 }
 
-void positionCallback(const geographic_msgs::GeoPointStamped::ConstPtr& inmsg)
+marine_msgs::NavEulerStamped const & getLatestOrientation()
 {
+    if(last_heading.header.stamp-last_posmv_orientation.header.stamp > ros::Duration(0.5))
+        return last_heading;
+    return last_posmv_orientation;
+}
+
+void updatePosition()
+{
+    double latitude, longitude, altitude;
+    ros::Time stamp;
+    
+    if(last_gps_position.header.stamp-last_posmv_position.header.stamp > ros::Duration(0.5))
+    {
+        latitude = last_gps_position.position.latitude;
+        longitude = last_gps_position.position.longitude;
+        altitude = last_gps_position.position.altitude;
+        stamp = last_gps_position.header.stamp;
+    }
+    else
+    {
+        latitude = last_posmv_position.latitude;
+        longitude = last_posmv_position.longitude;
+        altitude = last_posmv_position.altitude;
+        stamp = last_posmv_position.header.stamp;
+    }
+    
     if(!initializedLocalReference)
     {
-        LatOrigin = inmsg->position.latitude;
-        LongOrigin = inmsg->position.longitude;
-        initializeLocalReference(inmsg);
+        LatOrigin = latitude;
+        LongOrigin = longitude;
+        initializeLocalReference(stamp);
     }
-    //double t = inmsg->header.stamp.toSec();
     
-    gz4d::Point<double> position = geoReference.toLocal(gz4d::GeoPointECEF(gz4d::GeoPointLatLong(inmsg->position.latitude,inmsg->position.longitude,0.0)));
+    gz4d::Point<double> position = geoReference.toLocal(gz4d::GeoPointECEF(gz4d::GeoPointLatLong(latitude,longitude,altitude)));
     
-    geometry_msgs::TransformStamped odom_to_base_link;
-    odom_to_base_link.header.stamp = inmsg->header.stamp;
-    odom_to_base_link.header.frame_id = "odom";
-    odom_to_base_link.child_frame_id = "base_link";
-    odom_to_base_link.transform.translation.x = position[0];
-    odom_to_base_link.transform.translation.y = position[1];
-    odom_to_base_link.transform.translation.z = position[2];
-    auto rq =  tf::createQuaternionFromYaw((90-heading)*M_PI/180.0);
-    odom_to_base_link.transform.rotation.w = rq.getW();
-    odom_to_base_link.transform.rotation.x = rq.getX();
-    odom_to_base_link.transform.rotation.y = rq.getY();
-    odom_to_base_link.transform.rotation.z = rq.getZ();
-    broadcaster->sendTransform(odom_to_base_link);
+    geometry_msgs::TransformStamped map_to_north_up_base_link;
+    map_to_north_up_base_link.header.stamp = stamp;
+    map_to_north_up_base_link.header.frame_id = "map";
+    map_to_north_up_base_link.child_frame_id = "north_up_base_link";
+    map_to_north_up_base_link.transform.translation.x = position[0];
+    map_to_north_up_base_link.transform.translation.y = position[1];
+    map_to_north_up_base_link.transform.translation.z = position[2];
+    map_to_north_up_base_link.transform.rotation.w = 1.0;
+    broadcaster->sendTransform(map_to_north_up_base_link);
+
+
+    const marine_msgs::NavEulerStamped &orientation = getLatestOrientation();
+    tf2::Quaternion rq;
+    rq.setEuler((90-orientation.orientation.heading)*M_PI/180.0,0.0,0.0);
 
     geometry_msgs::PoseStamped ps;
-    ps.header.stamp = inmsg->header.stamp;
+    ps.header.stamp = stamp;
     ps.header.frame_id = "map";
     ps.pose.position.x = position[0];
     ps.pose.position.y = position[1];
@@ -197,62 +190,65 @@ void positionCallback(const geographic_msgs::GeoPointStamped::ConstPtr& inmsg)
     ps.pose.orientation.z = rq.getZ();
 
     position_map_pub.publish(ps);
-    
-    
-//     gz4d::geo::Point<double,gz4d::geo::WGS84::LatLon> p_ll(inmsg->position.latitude,inmsg->position.longitude,inmsg->position.altitude);
-//     gz4d::geo::Point<double, gz4d::geo::WGS84::ECEF> p_ecef(p_ll);
-//     geometry_msgs::PoseStamped ps_ecef;
-//     ps_ecef.header.stamp = inmsg->header.stamp;
-//     ps_ecef.header.frame_id = "earth";
-//     ps_ecef.pose.position.x = p_ecef[0];
-//     ps_ecef.pose.position.y = p_ecef[1];
-//     ps_ecef.pose.position.z = p_ecef[2];
-//     
-//     quaternionTFToMsg(earth_to_map_rotation*rq,ps_ecef.pose.orientation);
-//     
-//     position_ecef_pub.publish(ps_ecef);
-    if(last_timestamp.isValid())
-    {
-        nav_msgs::Odometry odom;
-        odom.header.stamp = inmsg->header.stamp;
-        odom.header.frame_id = "odom";
-        odom.pose.pose = ps.pose;
-        odom.child_frame_id = "base_link";
-        ros::Duration dt = inmsg->header.stamp - last_timestamp;
-        odom.twist.twist.linear.x = (position[0] - last_position[0])/dt.toSec();
-        odom.twist.twist.linear.y = (position[1] - last_position[1])/dt.toSec();
-        odom.twist.twist.angular.z = rotation_speed;
-        odom_pub.publish(odom);
-    }
-    
-    last_position = position;
-    last_timestamp = inmsg->header.stamp;
-
-    geodesy::UTMPoint p_utm;
-    geodesy::fromMsg(inmsg->position,p_utm);
-    ps.header.frame_id = "utm";
-    ps.pose.position.x = p_utm.easting;
-    ps.pose.position.y = p_utm.northing;
-    ps.pose.position.z = p_utm.altitude;
-    
-    position_utm_pub.publish(ps);
-    
 }
 
+void updateOrientation()
+{
+    const marine_msgs::NavEulerStamped &orientation = getLatestOrientation();
+    
+    geometry_msgs::TransformStamped north_up_base_link_to_level_base_link;
+    north_up_base_link_to_level_base_link.header.stamp = orientation.header.stamp;
+    north_up_base_link_to_level_base_link.header.frame_id = "north_up_base_link";
+    north_up_base_link_to_level_base_link.child_frame_id = "level_base_link";
+    tf2::Quaternion heading_quat;
+    heading_quat.setRPY(0.0,0.0,(90-orientation.orientation.heading)*M_PI/180.0);
+    north_up_base_link_to_level_base_link.transform.rotation = tf2::toMsg(heading_quat);
+    broadcaster->sendTransform(north_up_base_link_to_level_base_link);
+    
+    geometry_msgs::TransformStamped level_base_link_to_pitched_base_link;
+    level_base_link_to_pitched_base_link.header.stamp = orientation.header.stamp;
+    level_base_link_to_pitched_base_link.header.frame_id = "level_base_link";
+    level_base_link_to_pitched_base_link.child_frame_id = "pitched_base_link";
+    tf2::Quaternion pitch_quat;
+    pitch_quat.setRPY(0.0,-orientation.orientation.pitch*M_PI/180.0,0.0);
+    level_base_link_to_pitched_base_link.transform.rotation = tf2::toMsg(pitch_quat);
+    broadcaster->sendTransform(level_base_link_to_pitched_base_link);
+    
+    geometry_msgs::TransformStamped pitched_base_link_to_base_link;
+    pitched_base_link_to_base_link.header.stamp = orientation.header.stamp;
+    pitched_base_link_to_base_link.header.frame_id = "pitched_base_link";
+    pitched_base_link_to_base_link.child_frame_id = "base_link";
+    tf2::Quaternion roll_quat;
+    roll_quat.setRPY(orientation.orientation.roll*M_PI/180.0,0.0,0.0);
+    pitched_base_link_to_base_link.transform.rotation = tf2::toMsg(roll_quat);
+    broadcaster->sendTransform(pitched_base_link_to_base_link);
+}
 
+void posmvPositionCallback(const sensor_msgs::NavSatFix::ConstPtr& inmsg)
+{
+    last_posmv_position = *inmsg;
+    updatePosition();
+}
+
+void posmvOrientationCallback(const marine_msgs::NavEulerStamped::ConstPtr & inmsg)
+{
+    last_posmv_orientation = *inmsg;
+    updateOrientation();
+}
+
+void positionCallback(const geographic_msgs::GeoPointStamped::ConstPtr& inmsg)
+{
+    last_gps_position = *inmsg;
+    if(last_gps_position.header.stamp-last_posmv_position.header.stamp > ros::Duration(0.5))
+        updatePosition();
+}
 
 
 void headingCallback(const marine_msgs::NavEulerStamped::ConstPtr& inmsg)
 {
-    //double t = inmsg->header.stamp.toSec();
-    if(last_heading_timestamp.isValid())
-    {
-        rotation_speed = ((inmsg->orientation.heading - heading)/(inmsg->header.stamp - last_heading_timestamp).toSec())*M_PI/180.0;
-    }
-    
-    heading = inmsg->orientation.heading;
-    last_heading_timestamp = inmsg->header.stamp;
-    
+    last_heading = *inmsg;
+    if(last_heading.header.stamp - last_posmv_orientation.header.stamp > ros::Duration(0.5))
+        updateOrientation();
 }
 
 void originCallback(const ros::WallTimerEvent& event)
@@ -282,28 +278,56 @@ int main(int argc, char **argv)
 
     ros::Subscriber psub;
     ros::Subscriber hsub;
+    ros::Subscriber posmv_position_sub;
+    ros::Subscriber posmv_orientation_sub;
 
     if(role == "operator" || role == "observer")
     {
         psub = node->subscribe("/udp/position",10,positionCallback);
         hsub = node->subscribe("/udp/heading",10,headingCallback);
+        posmv_position_sub = node->subscribe("/udp/posmv/position",10,posmvPositionCallback);
+        posmv_orientation_sub = node->subscribe("/udp/posmv/orientation",10,posmvOrientationCallback);
     }
     else
     {    
         psub = node->subscribe("/position",10,positionCallback);
         hsub = node->subscribe("/heading",10,headingCallback);
+        posmv_position_sub = node->subscribe("/posmv/position",10,posmvPositionCallback);
+        posmv_orientation_sub = node->subscribe("/posmv/orientation",10,posmvOrientationCallback);
     }
     
     position_map_pub = node->advertise<geometry_msgs::PoseStamped>("/position_map",10);
-    position_utm_pub = node->advertise<geometry_msgs::PoseStamped>("/position_utm",10);
     origin_pub = node->advertise<geographic_msgs::GeoPoint>("/origin",1);
-    odom_pub = node->advertise<nav_msgs::Odometry>("odom",50);
 
     ros::WallTimer originTimer = node->createWallTimer(ros::WallDuration(1.0),originCallback);
     
     ros::ServiceServer wgs84_to_earth_service = node->advertiseService("wgs84_to_earth",ll2earth);
     ros::ServiceServer earth_to_wgs84_service = node->advertiseService("earth_to_wgs84",earth2ll);
 
+    XmlRpc::XmlRpcValue static_transform_params;
+    if(node->getParam("/project11/transformations/static",static_transform_params))
+    {
+        //std::cerr << "static transforms: " << static_transform_params << std::endl;
+        if(static_transform_params.getType() == XmlRpc::XmlRpcValue::TypeArray)
+        {
+            for(int i = 0; i < static_transform_params.size(); i++)
+            {
+                geometry_msgs::TransformStamped t;
+                //t.header.stamp = ros::Time::now();
+                t.header.frame_id = std::string(static_transform_params[i]["frame_id"]);
+                t.child_frame_id = std::string(static_transform_params[i]["child_frame_id"]);
+                t.transform.translation.x = static_transform_params[i]["transform"]["translation"]["x"];
+                t.transform.translation.y = static_transform_params[i]["transform"]["translation"]["y"];
+                t.transform.translation.z = static_transform_params[i]["transform"]["translation"]["z"];
+                t.transform.rotation.x = static_transform_params[i]["transform"]["rotation"]["x"];
+                t.transform.rotation.y = static_transform_params[i]["transform"]["rotation"]["y"];
+                t.transform.rotation.z = static_transform_params[i]["transform"]["rotation"]["z"];
+                t.transform.rotation.w = static_transform_params[i]["transform"]["rotation"]["w"];
+                static_broadcaster->sendTransform(t);
+            }
+        }
+    }
+    
     ros::spin();
     return 0;
 }
