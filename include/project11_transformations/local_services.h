@@ -52,6 +52,11 @@ namespace project11
             }
             return ret;
         }
+        
+        gz4d::GeoPointLatLong const &origin() const
+        {
+            return m_origin;
+        }
 
     private:
         void originCallback(const geographic_msgs::GeoPoint::ConstPtr& msg)
