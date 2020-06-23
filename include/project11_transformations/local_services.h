@@ -17,7 +17,11 @@ namespace project11
         {
             m_origin_sub = node.subscribe("/origin", 1, &Transformations::originCallback, this);
         }
-        
+
+        Transformations():m_origin(NAN,NAN,0.0)
+        {
+        }
+
         bool haveOrigin() const
         {
             return !isnan(m_origin[0]) && !isnan(m_origin[1]);

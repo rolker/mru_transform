@@ -49,7 +49,7 @@ include_directories(
     ${catkin_INCLUDE_DIRS}
 )
 
-add_executable(${PROJECT_NAME}_node src/broadcaster.cpp)
+add_executable(${PROJECT_NAME}_node src/project11_transformations.cpp)
 
 add_dependencies(${PROJECT_NAME}_node ${PROJECT_NAME}_generate_messages_cpp)
 add_dependencies(${PROJECT_NAME}_node marine_msgs_generate_messages_cpp)

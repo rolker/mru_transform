@@ -175,8 +175,11 @@ void updatePosition()
 
 
     const marine_msgs::NavEulerStamped &orientation = getLatestOrientation();
+    ROS_DEBUG_STREAM("orientation (heading degrees:) " << orientation.orientation.heading);
     tf2::Quaternion rq;
-    rq.setEuler((90-orientation.orientation.heading)*M_PI/180.0,0.0,0.0);
+    rq.setRPY(0.0,0.0,(90-orientation.orientation.heading)*M_PI/180.0);
+    //rq.setEuler((90-orientation.orientation.heading)*M_PI/180.0,0.0,0.0);
+    ROS_DEBUG_STREAM("quaternion: " << rq.getAngle());
 
     geometry_msgs::PoseStamped ps;
     ps.header.stamp = stamp;
