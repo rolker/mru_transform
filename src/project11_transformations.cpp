@@ -276,7 +276,6 @@ int main(int argc, char **argv)
     node->param<std::string>("/project11/role", role, "unknown");
     std::cerr << "role: " << role << std::endl;
     
-    static_broadcaster = new tf2_ros::StaticTransformBroadcaster;
     broadcaster = new tf2_ros::TransformBroadcaster;
 
     ros::Subscriber psub;
@@ -307,30 +306,6 @@ int main(int argc, char **argv)
     ros::ServiceServer wgs84_to_earth_service = node->advertiseService("wgs84_to_earth",ll2earth);
     ros::ServiceServer earth_to_wgs84_service = node->advertiseService("earth_to_wgs84",earth2ll);
 
-    XmlRpc::XmlRpcValue static_transform_params;
-    if(node->getParam("/project11/transformations/static",static_transform_params))
-    {
-        //std::cerr << "static transforms: " << static_transform_params << std::endl;
-        if(static_transform_params.getType() == XmlRpc::XmlRpcValue::TypeArray)
-        {
-            for(int i = 0; i < static_transform_params.size(); i++)
-            {
-                geometry_msgs::TransformStamped t;
-                //t.header.stamp = ros::Time::now();
-                t.header.frame_id = std::string(static_transform_params[i]["frame_id"]);
-                t.child_frame_id = std::string(static_transform_params[i]["child_frame_id"]);
-                t.transform.translation.x = static_transform_params[i]["transform"]["translation"]["x"];
-                t.transform.translation.y = static_transform_params[i]["transform"]["translation"]["y"];
-                t.transform.translation.z = static_transform_params[i]["transform"]["translation"]["z"];
-                t.transform.rotation.x = static_transform_params[i]["transform"]["rotation"]["x"];
-                t.transform.rotation.y = static_transform_params[i]["transform"]["rotation"]["y"];
-                t.transform.rotation.z = static_transform_params[i]["transform"]["rotation"]["z"];
-                t.transform.rotation.w = static_transform_params[i]["transform"]["rotation"]["w"];
-                static_broadcaster->sendTransform(t);
-            }
-        }
-    }
-    
     ros::spin();
     return 0;
 }
