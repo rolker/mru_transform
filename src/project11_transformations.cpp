@@ -1,5 +1,4 @@
 #include <ros/ros.h>
-#include <tf2_ros/static_transform_broadcaster.h>
 #include <tf2_ros/transform_broadcaster.h>
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.h>
@@ -23,7 +22,6 @@ tf2::Quaternion earth_to_map_rotation;
 
 bool initializedLocalReference = false;
 
-static tf2_ros::StaticTransformBroadcaster *static_broadcaster = nullptr;
 static tf2_ros::TransformBroadcaster * broadcaster = nullptr;
 
 ros::Publisher position_map_pub;
