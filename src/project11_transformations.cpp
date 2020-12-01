@@ -38,6 +38,8 @@ ros::ServiceServer map_to_wgs84_service;
 
 ros::NodeHandle *node;
 
+std::string base_link_prefix = "";
+
 bool ll2map(project11_transformations::LatLongToMap::Request &req, project11_transformations::LatLongToMap::Response &res)
 {
     gz4d::GeoPointLatLong p_ll(req.wgs84.position.latitude,req.wgs84.position.longitude,req.wgs84.position.altitude);
@@ -164,7 +166,7 @@ void updatePosition()
     geometry_msgs::TransformStamped map_to_north_up_base_link;
     map_to_north_up_base_link.header.stamp = stamp;
     map_to_north_up_base_link.header.frame_id = "map";
-    map_to_north_up_base_link.child_frame_id = "north_up_base_link";
+    map_to_north_up_base_link.child_frame_id = base_link_prefix+"north_up_base_link";
     map_to_north_up_base_link.transform.translation.x = position[0];
     map_to_north_up_base_link.transform.translation.y = position[1];
     map_to_north_up_base_link.transform.translation.z = position[2];
@@ -199,8 +201,8 @@ void updateOrientation()
     
     geometry_msgs::TransformStamped north_up_base_link_to_level_base_link;
     north_up_base_link_to_level_base_link.header.stamp = orientation.header.stamp;
-    north_up_base_link_to_level_base_link.header.frame_id = "north_up_base_link";
-    north_up_base_link_to_level_base_link.child_frame_id = "level_base_link";
+    north_up_base_link_to_level_base_link.header.frame_id = base_link_prefix+"north_up_base_link";
+    north_up_base_link_to_level_base_link.child_frame_id = base_link_prefix+"level_base_link";
     tf2::Quaternion heading_quat;
     heading_quat.setRPY(0.0,0.0,(90-orientation.orientation.heading)*M_PI/180.0);
     north_up_base_link_to_level_base_link.transform.rotation = tf2::toMsg(heading_quat);
@@ -208,8 +210,8 @@ void updateOrientation()
     
     geometry_msgs::TransformStamped level_base_link_to_pitched_base_link;
     level_base_link_to_pitched_base_link.header.stamp = orientation.header.stamp;
-    level_base_link_to_pitched_base_link.header.frame_id = "level_base_link";
-    level_base_link_to_pitched_base_link.child_frame_id = "pitched_base_link";
+    level_base_link_to_pitched_base_link.header.frame_id = base_link_prefix+"level_base_link";
+    level_base_link_to_pitched_base_link.child_frame_id = base_link_prefix+"pitched_base_link";
     tf2::Quaternion pitch_quat;
     pitch_quat.setRPY(0.0,-orientation.orientation.pitch*M_PI/180.0,0.0);
     level_base_link_to_pitched_base_link.transform.rotation = tf2::toMsg(pitch_quat);
@@ -217,8 +219,8 @@ void updateOrientation()
     
     geometry_msgs::TransformStamped pitched_base_link_to_base_link;
     pitched_base_link_to_base_link.header.stamp = orientation.header.stamp;
-    pitched_base_link_to_base_link.header.frame_id = "pitched_base_link";
-    pitched_base_link_to_base_link.child_frame_id = "base_link";
+    pitched_base_link_to_base_link.header.frame_id = base_link_prefix+"pitched_base_link";
+    pitched_base_link_to_base_link.child_frame_id = base_link_prefix+"base_link";
     tf2::Quaternion roll_quat;
     roll_quat.setRPY(orientation.orientation.roll*M_PI/180.0,0.0,0.0);
     pitched_base_link_to_base_link.transform.rotation = tf2::toMsg(roll_quat);
@@ -273,6 +275,9 @@ int main(int argc, char **argv)
     std::string role;
     node->param<std::string>("/project11/role", role, "unknown");
     std::cerr << "role: " << role << std::endl;
+
+    node->param<std::string>("/project11/base_link_prefix", base_link_prefix, "");
+    std::cerr << "base_link_prefix: " << base_link_prefix << std::endl;
     
     broadcaster = new tf2_ros::TransformBroadcaster;
 
