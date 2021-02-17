@@ -15,7 +15,7 @@ namespace project11
     public:
         Transformations(ros::NodeHandle &node):m_origin(NAN,NAN,0.0)
         {
-            m_origin_sub = node.subscribe("/origin", 1, &Transformations::originCallback, this);
+            m_origin_sub = node.subscribe("project11/origin", 1, &Transformations::originCallback, this);
         }
 
         Transformations():m_origin(NAN,NAN,0.0)

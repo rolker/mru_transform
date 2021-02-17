@@ -273,10 +273,10 @@ int main(int argc, char **argv)
     node = new ros::NodeHandle();
     
     std::string role;
-    node->param<std::string>("/project11/role", role, "unknown");
+    node->param<std::string>("project11/role", role, "unknown");
     std::cerr << "role: " << role << std::endl;
 
-    node->param<std::string>("/project11/base_link_prefix", base_link_prefix, "");
+    node->param<std::string>("project11/base_link_prefix", base_link_prefix, "");
     std::cerr << "base_link_prefix: " << base_link_prefix << std::endl;
     
     broadcaster = new tf2_ros::TransformBroadcaster;
@@ -288,21 +288,21 @@ int main(int argc, char **argv)
 
     if(role == "operator" || role == "observer")
     {
-        psub = node->subscribe("/udp/position",10,positionCallback);
-        hsub = node->subscribe("/udp/heading",10,headingCallback);
-        posmv_position_sub = node->subscribe("/udp/posmv/position",10,posmvPositionCallback);
-        posmv_orientation_sub = node->subscribe("/udp/posmv/orientation",10,posmvOrientationCallback);
+        psub = node->subscribe("position",10,positionCallback);
+        hsub = node->subscribe("heading",10,headingCallback);
+        posmv_position_sub = node->subscribe("posmv/position",10,posmvPositionCallback);
+        posmv_orientation_sub = node->subscribe("posmv/orientation",10,posmvOrientationCallback);
     }
     else
     {    
-        psub = node->subscribe("/position",10,positionCallback);
-        hsub = node->subscribe("/heading",10,headingCallback);
-        posmv_position_sub = node->subscribe("/posmv/position",10,posmvPositionCallback);
-        posmv_orientation_sub = node->subscribe("/posmv/orientation",10,posmvOrientationCallback);
+        psub = node->subscribe("position",10,positionCallback);
+        hsub = node->subscribe("heading",10,headingCallback);
+        posmv_position_sub = node->subscribe("posmv/position",10,posmvPositionCallback);
+        posmv_orientation_sub = node->subscribe("posmv/orientation",10,posmvOrientationCallback);
     }
     
-    position_map_pub = node->advertise<geometry_msgs::PoseStamped>("/position_map",10);
-    origin_pub = node->advertise<geographic_msgs::GeoPoint>("/origin",1);
+    position_map_pub = node->advertise<geometry_msgs::PoseStamped>("position_map",10);
+    origin_pub = node->advertise<geographic_msgs::GeoPoint>("project11/origin",1,true);
 
     ros::WallTimer originTimer = node->createWallTimer(ros::WallDuration(1.0),originCallback);
     
