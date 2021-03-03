@@ -4,7 +4,7 @@
 #include <ros/ros.h>
 #include "geographic_msgs/GeoPoint.h"
 #include "geometry_msgs/Point.h"
-#include "project11/gz4d_geo.h"
+#include "project11/utils.h"
 #include <cmath>
 
 namespace project11
@@ -32,13 +32,12 @@ namespace project11
             geometry_msgs::Point ret;
             if(haveOrigin())
             {
-                gz4d::GeoPointLatLong p_ll(position.latitude, position.longitude, position.altitude);
-                gz4d::GeoPointECEF p_ecef(p_ll);
+                LatLongDegrees p_ll;
+                fromMsg(position, p_ll);
+                ECEF p_ecef(p_ll);
         
-                gz4d::Point<double> position_map = m_geoReference.toLocal(p_ecef);
-                ret.x = position_map[0];
-                ret.y = position_map[1];
-                ret.z = position_map[2];
+                Point position_map = m_geoReference.toLocal(p_ecef);
+                toMsg(position_map, ret);
             }
             return ret;
         }
@@ -48,16 +47,14 @@ namespace project11
             geographic_msgs::GeoPoint ret;
             if(haveOrigin())
             {
-                gz4d::Point<double> position(point.x, point.y, point.z);
-                auto latlon = m_geoReference.toLatLong(position);
-                ret.latitude = latlon[0];
-                ret.longitude = latlon[1];
-                ret.altitude = latlon[2];
+                Point position(point.x, point.y, point.z);
+                LatLongDegrees latlon = m_geoReference.toLatLong(position);
+                toMsg(latlon, ret);
             }
             return ret;
         }
         
-        gz4d::GeoPointLatLong const &origin() const
+        LatLongDegrees const &origin() const
         {
             return m_origin;
         }
@@ -69,14 +66,13 @@ namespace project11
             {
                 m_origin[0] = msg->latitude;
                 m_origin[1] = msg->longitude;
-                m_geoReference = gz4d::LocalENU(m_origin);
+                m_geoReference = ENUFrame(m_origin);
             }
         }
         
-        
         ros::Subscriber m_origin_sub;
-        gz4d::GeoPointLatLong m_origin;
-        gz4d::LocalENU m_geoReference;
+        LatLongDegrees m_origin;
+        ENUFrame m_geoReference;
     };
 }
 

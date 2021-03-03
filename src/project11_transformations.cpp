@@ -1,314 +1,311 @@
 #include <ros/ros.h>
+
 #include <tf2_ros/transform_broadcaster.h>
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.h>
+#include <tf2/utils.h>
+
+#include <message_filters/subscriber.h>
+#include <message_filters/time_synchronizer.h>
+
 #include <geometry_msgs/TransformStamped.h>
-#include "geographic_msgs/GeoPointStamped.h"
-#include "geographic_msgs/GeoPoint.h"
-#include "marine_msgs/NavEulerStamped.h"
-#include "project11/gz4d_geo.h"
+#include <nav_msgs/Odometry.h>
+
+#include <sensor_msgs/NavSatFix.h>
+#include <sensor_msgs/Imu.h>
+#include <geometry_msgs/TwistWithCovarianceStamped.h>
+
+#include "project11/utils.h"
+
 #include "project11_transformations/LatLongToEarth.h"
 #include "project11_transformations/LatLongToMap.h"
 #include "project11_transformations/EarthToLatLong.h"
 #include "project11_transformations/MapToLatLong.h"
-#include <sensor_msgs/NavSatFix.h>
 
-double LatOrigin  = 0.0;
-double LongOrigin = 0.0;
+namespace p11 = project11;
 
-gz4d::LocalENU geoReference;
-
-tf2::Quaternion earth_to_map_rotation;
-
-bool initializedLocalReference = false;
-
-static tf2_ros::TransformBroadcaster * broadcaster = nullptr;
-
-ros::Publisher position_map_pub;
-ros::Publisher origin_pub;
-
-geographic_msgs::GeoPointStamped last_gps_position;
-marine_msgs::NavEulerStamped last_heading;
-
-sensor_msgs::NavSatFix last_posmv_position;
-marine_msgs::NavEulerStamped last_posmv_orientation;
-
-ros::ServiceServer wgs84_to_map_service;
-ros::ServiceServer map_to_wgs84_service;
-
-ros::NodeHandle *node;
-
-std::string base_link_prefix = "";
-
-bool ll2map(project11_transformations::LatLongToMap::Request &req, project11_transformations::LatLongToMap::Response &res)
+class MapFrame
 {
-    gz4d::GeoPointLatLong p_ll(req.wgs84.position.latitude,req.wgs84.position.longitude,req.wgs84.position.altitude);
-    gz4d::GeoPointECEF p_ecef(p_ll);
+public:
+  MapFrame(p11::LatLongDegrees const &datum, std::string const &map_frame, std::string const &odom_frame, std::shared_ptr<tf2_ros::TransformBroadcaster> broadcaster, ros::Duration broadcast_interval):m_mapFrame(p11::ENUFrame(datum)), m_broadcaster(broadcaster), m_broadcast_interval(broadcast_interval)
+  {
+    m_earth_to_map_transform.header.frame_id = "earth";
+    m_earth_to_map_transform.child_frame_id = map_frame;
     
-    gz4d::Point<double> position = geoReference.toLocal(p_ecef);
-    
-    res.map.header.frame_id = "map";
-    res.map.header.stamp = req.wgs84.header.stamp;
-    res.map.point.x = position[0];
-    res.map.point.y = position[1];
-    res.map.point.z = position[2];
-    return true;
-}
-
-bool map2ll(project11_transformations::MapToLatLong::Request &req, project11_transformations::MapToLatLong::Response &res)
-{
-    gz4d::Point<double> position(req.map.point.x,req.map.point.y,req.map.point.z);
-    auto latlon = geoReference.toLatLong(position);
-    res.wgs84.position.latitude = latlon[0];
-    res.wgs84.position.longitude = latlon[1];
-    res.wgs84.position.altitude = latlon[2];
-    
-    res.wgs84.header.frame_id = "wgs84";
-    res.wgs84.header.stamp = req.map.header.stamp;
-    return true;
-}
-
-bool ll2earth(project11_transformations::LatLongToEarth::Request &req, project11_transformations::LatLongToEarth::Response &res)
-{
-    gz4d::GeoPointLatLong p_ll(req.wgs84.position.latitude,req.wgs84.position.longitude,req.wgs84.position.altitude);
-    gz4d::GeoPointECEF p_ecef(p_ll);
-    res.earth.header.frame_id = "earth";
-    res.earth.header.stamp = req.wgs84.header.stamp;
-    res.earth.point.x = p_ecef[0];
-    res.earth.point.y = p_ecef[1];
-    res.earth.point.z = p_ecef[2];
-    return true;
-}
-
-bool earth2ll(project11_transformations::EarthToLatLong::Request &req, project11_transformations::EarthToLatLong::Response &res)
-{
-    gz4d::GeoPointECEF p_ecef(req.earth.point.x,req.earth.point.y,req.earth.point.z);
-    gz4d::GeoPointLatLong p_ll(p_ecef);
-    
-    res.wgs84.header.frame_id = "wgs84";
-    res.wgs84.header.stamp = req.earth.header.stamp;
-    
-    res.wgs84.position.latitude = p_ll[0];
-    res.wgs84.position.longitude = p_ll[1];
-    res.wgs84.position.altitude = p_ll[2];
-    return true;
-
-}
-
-void initializeLocalReference(ros::Time stamp)
-{
-    gz4d::GeoPointLatLong gr(LatOrigin,LongOrigin,0.0);
-    geoReference = gz4d::LocalENU(gr);
-
-    geometry_msgs::TransformStamped transformStamped_earth_to_map;
-    transformStamped_earth_to_map.header.stamp = stamp;
-    transformStamped_earth_to_map.header.frame_id = "earth";
-    transformStamped_earth_to_map.child_frame_id = "map";
-    
-    gz4d::GeoPointECEF originECEF(gr);
-    transformStamped_earth_to_map.transform.translation.x = originECEF[0];
-    transformStamped_earth_to_map.transform.translation.y = originECEF[1];
-    transformStamped_earth_to_map.transform.translation.z = originECEF[2];
+    gz4d::GeoPointECEF originECEF(datum);
+    m_earth_to_map_transform.transform.translation.x = originECEF[0];
+    m_earth_to_map_transform.transform.translation.y = originECEF[1];
+    m_earth_to_map_transform.transform.translation.z = originECEF[2];
     
     tf2::Quaternion longQuat;
-    longQuat.setRPY(0.0,0.0,(LongOrigin+90.0)*M_PI/180.0);
+    longQuat.setRPY(0.0,0.0,(datum.longitude()+90.0)*M_PI/180.0);
     tf2::Quaternion latQuat;
-    latQuat.setRPY((90-LatOrigin)*M_PI/180.0,0.0,0.0);
-    earth_to_map_rotation = longQuat*latQuat;
+    latQuat.setRPY((90-datum.latitude())*M_PI/180.0,0.0,0.0);
+    tf2::Quaternion earth_to_map_rotation = longQuat*latQuat;
     
-    transformStamped_earth_to_map.transform.rotation = tf2::toMsg(earth_to_map_rotation);
+    m_earth_to_map_transform.transform.rotation = tf2::toMsg(earth_to_map_rotation);
     
-    broadcaster->sendTransform(transformStamped_earth_to_map);
+    broadcaster->sendTransform(m_earth_to_map_transform);
     
+    m_map_to_odom_transform.header.frame_id = map_frame;
+    m_map_to_odom_transform.child_frame_id = odom_frame;
+    m_map_to_odom_transform.transform.rotation.w = 1.0; // make null quaternion unit length
     
-    wgs84_to_map_service = node->advertiseService("wgs84_to_map",ll2map);
-    map_to_wgs84_service = node->advertiseService("map_to_wgs84",map2ll);
+    broadcaster->sendTransform(m_map_to_odom_transform);
     
-    initializedLocalReference = true;
-}
+    ros::NodeHandle nh;
+    m_wgs84_to_map_service = nh.advertiseService("wgs84_to_map", &MapFrame::ll2map, this);
+    m_map_to_wgs84_service = nh.advertiseService("map_to_wgs84", &MapFrame::map2ll, this);
+    
+    m_timer = nh.createTimer(broadcast_interval, &MapFrame::timerCallback, this);
+  }
 
-marine_msgs::NavEulerStamped const & getLatestOrientation()
-{
-    if(last_heading.header.stamp-last_posmv_orientation.header.stamp > ros::Duration(0.5))
-        return last_heading;
-    return last_posmv_orientation;
-}
+  p11::Point toLocal(p11::LatLongDegrees const &p) const
+  {
+    return m_mapFrame.toLocal(p);
+  }
+  
+private:
+  p11::ENUFrame m_mapFrame;
+  
+  geometry_msgs::TransformStamped m_earth_to_map_transform;
+  geometry_msgs::TransformStamped m_map_to_odom_transform;
+  
+  std::shared_ptr<tf2_ros::TransformBroadcaster> m_broadcaster;
+  ros::Duration m_broadcast_interval;
+  ros::Timer m_timer;
 
-void updatePosition()
+  ros::ServiceServer m_wgs84_to_map_service;
+  ros::ServiceServer m_map_to_wgs84_service;
+
+  void timerCallback(const ros::TimerEvent &timerEvent)
+  {
+    // set a bit to the future to prevent blocking transforms
+    // remember to take this into account if updating datum
+    ros::Time a_bit_later = timerEvent.current_real+m_broadcast_interval;
+    
+    // make sure we don't go back in time when sending transform
+    if(a_bit_later > m_earth_to_map_transform.header.stamp)
+    {
+      m_earth_to_map_transform.header.stamp = a_bit_later;
+      m_broadcaster->sendTransform(m_earth_to_map_transform);
+      m_map_to_odom_transform.header.stamp = a_bit_later;
+      m_broadcaster->sendTransform(m_map_to_odom_transform);
+    }
+  }
+
+  bool ll2map(project11_transformations::LatLongToMap::Request &req, project11_transformations::LatLongToMap::Response &res)
+  {
+      p11::LatLongDegrees p_ll;
+      p11::fromMsg(req.wgs84.position, p_ll); 
+      p11::ECEF p_ecef(p_ll);
+      
+      p11::Point position = m_mapFrame.toLocal(p_ecef);
+      
+      res.map.header.frame_id = m_earth_to_map_transform.child_frame_id;
+      res.map.header.stamp = req.wgs84.header.stamp;
+      p11::toMsg(position, res.map.point);
+      return true;
+  }
+
+  bool map2ll(project11_transformations::MapToLatLong::Request &req, project11_transformations::MapToLatLong::Response &res)
+  {
+      p11::Point position;
+      p11::fromMsg(req.map.point, position);
+      p11::LatLongDegrees latlon = m_mapFrame.toLatLong(position);
+      p11::toMsg(latlon, res.wgs84.position);
+      
+      res.wgs84.header.frame_id = "wgs84";
+      res.wgs84.header.stamp = req.map.header.stamp;
+      return true;
+  }
+
+};
+
+// forward declare so Sensor can call it.
+void update();
+
+class Sensor
 {
-    double latitude, longitude, altitude;
-    ros::Time stamp;
-    
-    if(last_gps_position.header.stamp-last_posmv_position.header.stamp > ros::Duration(0.5))
+public:
+  Sensor(XmlRpc::XmlRpcValue const &sensor_param)
+  {
+    std::string position_topic, orientation_topic, velocity_topic;
+    position_topic = std::string(sensor_param["topics"]["position"]);
+    orientation_topic = std::string(sensor_param["topics"]["orientation"]);
+    velocity_topic = std::string(sensor_param["topics"]["velocity"]);
+
+    ros::NodeHandle nh;
+
+    m_position_sub = std::shared_ptr<PositionSub>(new PositionSub(nh, position_topic, 1));
+    m_orientation_sub =  std::shared_ptr<OrientationSub>(new OrientationSub(nh, orientation_topic, 1));
+    m_velocity_sub = std::shared_ptr<VelocitySub>(new VelocitySub(nh, velocity_topic, 1));
+
+    m_sync = std::shared_ptr<SyncType>(new SyncType(*m_position_sub, *m_orientation_sub, *m_velocity_sub, 10));
+    m_sync->registerCallback(boost::bind(&Sensor::callback, this, _1, _2, _3));
+  }
+  
+  sensor_msgs::NavSatFix::ConstPtr lastPositionMessage() const {return m_last_position;}
+  sensor_msgs::Imu::ConstPtr lastOrientationMessage() const {return m_last_orientation;}
+  geometry_msgs::TwistWithCovarianceStamped::ConstPtr lastVelocityMessage() const {return m_last_velocity;}
+
+  typedef std::shared_ptr<Sensor> Ptr;
+private:
+  void callback(const sensor_msgs::NavSatFix::ConstPtr & position, const sensor_msgs::Imu::ConstPtr & orientation, const geometry_msgs::TwistWithCovarianceStamped::ConstPtr & velocity)
+  {
+    m_last_position = position;
+    m_last_orientation = orientation;
+    m_last_velocity = velocity;
+    update();
+  }
+  
+  typedef message_filters::Subscriber<sensor_msgs::NavSatFix> PositionSub;
+  std::shared_ptr<PositionSub> m_position_sub;
+
+  typedef message_filters::Subscriber<sensor_msgs::Imu> OrientationSub;
+  std::shared_ptr<OrientationSub> m_orientation_sub;
+
+  typedef message_filters::Subscriber<geometry_msgs::TwistWithCovarianceStamped> VelocitySub;
+  std::shared_ptr<VelocitySub> m_velocity_sub;
+  
+  typedef message_filters::TimeSynchronizer<sensor_msgs::NavSatFix, sensor_msgs::Imu, geometry_msgs::TwistWithCovarianceStamped> SyncType;
+  std::shared_ptr<SyncType> m_sync;
+  
+  sensor_msgs::NavSatFix::ConstPtr m_last_position;
+  sensor_msgs::Imu::ConstPtr m_last_orientation;
+  geometry_msgs::TwistWithCovarianceStamped::ConstPtr m_last_velocity;
+};
+
+// list of sensors, in order of priority
+std::vector<Sensor::Ptr> sensors;
+
+sensor_msgs::NavSatFix::ConstPtr last_sent_position;
+sensor_msgs::Imu::ConstPtr last_sent_orientation;
+geometry_msgs::TwistWithCovarianceStamped::ConstPtr last_sent_velocity;
+
+ros::Duration sensor_timeout(1.0);
+
+std::string base_frame = "base_link";
+std::string map_frame = "map";
+std::string odom_frame = "odom";
+
+std::shared_ptr<MapFrame> mapFrame;
+std::shared_ptr<tf2_ros::TransformBroadcaster> broadcaster;
+ros::Publisher odom_pub;
+
+void update()
+{
+  ros::Time now = ros::Time::now();
+  
+  sensor_msgs::NavSatFix::ConstPtr position;
+  sensor_msgs::Imu::ConstPtr orientation;
+  geometry_msgs::TwistWithCovarianceStamped::ConstPtr velocity;
+
+  // loop through the sensors until we get an unexpired message of each type
+  for(auto s: sensors)
+  {
+    if(!position && s->lastPositionMessage() && now - s->lastPositionMessage()->header.stamp < sensor_timeout)
+      position = s->lastPositionMessage();
+    if(!orientation && s->lastOrientationMessage() && now - s->lastOrientationMessage()->header.stamp < sensor_timeout)
+      orientation = s->lastOrientationMessage();
+    if(!velocity && s->lastVelocityMessage() && now - s->lastVelocityMessage()->header.stamp < sensor_timeout)
+      velocity = s->lastVelocityMessage();
+    if(position && orientation && velocity)
+      break;
+  }
+
+  nav_msgs::Odometry odom;
+  odom.header.frame_id = odom_frame;
+  
+  if(position && (!last_sent_position || position->header.stamp > last_sent_position->header.stamp))
+  {
+    if(!mapFrame)
     {
-        latitude = last_gps_position.position.latitude;
-        longitude = last_gps_position.position.longitude;
-        altitude = last_gps_position.position.altitude;
-        stamp = last_gps_position.header.stamp;
-    }
-    else
-    {
-        latitude = last_posmv_position.latitude;
-        longitude = last_posmv_position.longitude;
-        altitude = last_posmv_position.altitude;
-        stamp = last_posmv_position.header.stamp;
+      p11::LatLongDegrees datum;
+      p11::fromMsg(*position,datum);
+      mapFrame = std::shared_ptr<MapFrame>(new MapFrame(datum, map_frame, odom_frame, broadcaster, ros::Duration(2.0) ));
     }
     
-    if(!initializedLocalReference)
-    {
-        LatOrigin = latitude;
-        LongOrigin = longitude;
-        initializeLocalReference(stamp);
-    }
-    
-    gz4d::Point<double> position = geoReference.toLocal(gz4d::GeoPointECEF(gz4d::GeoPointLatLong(latitude,longitude,altitude)));
+    p11::LatLongDegrees p;
+    p11::fromMsg(*position, p);
+    p11::Point position_map = mapFrame->toLocal(p);
     
     geometry_msgs::TransformStamped map_to_north_up_base_link;
-    map_to_north_up_base_link.header.stamp = stamp;
-    map_to_north_up_base_link.header.frame_id = "map";
-    map_to_north_up_base_link.child_frame_id = base_link_prefix+"north_up_base_link";
-    map_to_north_up_base_link.transform.translation.x = position[0];
-    map_to_north_up_base_link.transform.translation.y = position[1];
-    map_to_north_up_base_link.transform.translation.z = position[2];
+    map_to_north_up_base_link.header.stamp = position->header.stamp;
+    map_to_north_up_base_link.header.frame_id = map_frame;
+    map_to_north_up_base_link.child_frame_id = base_frame+"_north_up";
+    p11::toMsg(position_map, map_to_north_up_base_link.transform.translation);
     map_to_north_up_base_link.transform.rotation.w = 1.0;
     broadcaster->sendTransform(map_to_north_up_base_link);
-
-
-    const marine_msgs::NavEulerStamped &orientation = getLatestOrientation();
-    ROS_DEBUG_STREAM("orientation (heading degrees:) " << orientation.orientation.heading);
-    tf2::Quaternion rq;
-    rq.setRPY(0.0,0.0,(90-orientation.orientation.heading)*M_PI/180.0);
-    //rq.setEuler((90-orientation.orientation.heading)*M_PI/180.0,0.0,0.0);
-    ROS_DEBUG_STREAM("quaternion: " << rq.getAngle());
-
-    geometry_msgs::PoseStamped ps;
-    ps.header.stamp = stamp;
-    ps.header.frame_id = "map";
-    ps.pose.position.x = position[0];
-    ps.pose.position.y = position[1];
-    ps.pose.position.z = position[2];
-    ps.pose.orientation.w = rq.getW();
-    ps.pose.orientation.x = rq.getX();
-    ps.pose.orientation.y = rq.getY();
-    ps.pose.orientation.z = rq.getZ();
-
-    position_map_pub.publish(ps);
-}
-
-void updateOrientation()
-{
-    const marine_msgs::NavEulerStamped &orientation = getLatestOrientation();
+    
+    p11::toMsg(position_map, odom.pose.pose.position);
+    odom.header.stamp = position->header.stamp;
+    
+    last_sent_position = position;
+  }
+  
+  if(orientation && (!last_sent_orientation || orientation->header.stamp > last_sent_orientation->header.stamp))
+  {
+    double roll,pitch,yaw;
+    tf2::getEulerYPR(orientation->orientation, yaw, pitch, roll);
     
     geometry_msgs::TransformStamped north_up_base_link_to_level_base_link;
-    north_up_base_link_to_level_base_link.header.stamp = orientation.header.stamp;
-    north_up_base_link_to_level_base_link.header.frame_id = base_link_prefix+"north_up_base_link";
-    north_up_base_link_to_level_base_link.child_frame_id = base_link_prefix+"level_base_link";
+    north_up_base_link_to_level_base_link.header.stamp = orientation->header.stamp;
+    north_up_base_link_to_level_base_link.header.frame_id = base_frame+"_north_up";
+    north_up_base_link_to_level_base_link.child_frame_id = base_frame+"_level";
     tf2::Quaternion heading_quat;
-    heading_quat.setRPY(0.0,0.0,(90-orientation.orientation.heading)*M_PI/180.0);
+    heading_quat.setRPY(0.0,0.0,yaw);
     north_up_base_link_to_level_base_link.transform.rotation = tf2::toMsg(heading_quat);
     broadcaster->sendTransform(north_up_base_link_to_level_base_link);
     
-    geometry_msgs::TransformStamped level_base_link_to_pitched_base_link;
-    level_base_link_to_pitched_base_link.header.stamp = orientation.header.stamp;
-    level_base_link_to_pitched_base_link.header.frame_id = base_link_prefix+"level_base_link";
-    level_base_link_to_pitched_base_link.child_frame_id = base_link_prefix+"pitched_base_link";
-    tf2::Quaternion pitch_quat;
-    pitch_quat.setRPY(0.0,-orientation.orientation.pitch*M_PI/180.0,0.0);
-    level_base_link_to_pitched_base_link.transform.rotation = tf2::toMsg(pitch_quat);
-    broadcaster->sendTransform(level_base_link_to_pitched_base_link);
+    geometry_msgs::TransformStamped north_up_base_link_to_base_link;
+    north_up_base_link_to_base_link.header.stamp = orientation->header.stamp;
+    north_up_base_link_to_base_link.header.frame_id = base_frame+"_north_up";
+    north_up_base_link_to_base_link.child_frame_id = base_frame;
+    north_up_base_link_to_base_link.transform.rotation = orientation->orientation;
+    broadcaster->sendTransform(north_up_base_link_to_base_link);
+
+    odom.pose.pose.orientation = orientation->orientation;
     
-    geometry_msgs::TransformStamped pitched_base_link_to_base_link;
-    pitched_base_link_to_base_link.header.stamp = orientation.header.stamp;
-    pitched_base_link_to_base_link.header.frame_id = base_link_prefix+"pitched_base_link";
-    pitched_base_link_to_base_link.child_frame_id = base_link_prefix+"base_link";
-    tf2::Quaternion roll_quat;
-    roll_quat.setRPY(orientation.orientation.roll*M_PI/180.0,0.0,0.0);
-    pitched_base_link_to_base_link.transform.rotation = tf2::toMsg(roll_quat);
-    broadcaster->sendTransform(pitched_base_link_to_base_link);
-}
-
-void posmvPositionCallback(const sensor_msgs::NavSatFix::ConstPtr& inmsg)
-{
-    last_posmv_position = *inmsg;
-    updatePosition();
-}
-
-void posmvOrientationCallback(const marine_msgs::NavEulerStamped::ConstPtr & inmsg)
-{
-    last_posmv_orientation = *inmsg;
-    updateOrientation();
-}
-
-void positionCallback(const geographic_msgs::GeoPointStamped::ConstPtr& inmsg)
-{
-    last_gps_position = *inmsg;
-    if(last_gps_position.header.stamp-last_posmv_position.header.stamp > ros::Duration(0.5))
-        updatePosition();
-}
-
-
-void headingCallback(const marine_msgs::NavEulerStamped::ConstPtr& inmsg)
-{
-    last_heading = *inmsg;
-    if(last_heading.header.stamp - last_posmv_orientation.header.stamp > ros::Duration(0.5))
-        updateOrientation();
-}
-
-void originCallback(const ros::WallTimerEvent& event)
-{
-    if(initializedLocalReference)
-    {
-        geographic_msgs::GeoPoint gp;
-        gp.latitude = LatOrigin;
-        gp.longitude = LongOrigin;
-        origin_pub.publish(gp);
-    }
+    last_sent_orientation = orientation;
+  }
+  
+  if(velocity && (!last_sent_velocity || velocity->header.stamp > last_sent_velocity->header.stamp))
+  {
+    odom.child_frame_id = velocity->header.frame_id;
+    odom.twist = velocity->twist;
+    odom_pub.publish(odom);
+    last_sent_velocity = velocity;
+  }
 }
 
 
 int main(int argc, char **argv)
 {
-    ros::init(argc, argv, "project11_transformation_node");
+  ros::init(argc, argv, "project11_transformations");
     
-    node = new ros::NodeHandle();
-    
-    std::string role;
-    node->param<std::string>("project11/role", role, "unknown");
-    std::cerr << "role: " << role << std::endl;
+  ros::NodeHandle nh;
+  
+  nh.getParam("map_frame", map_frame);
+  nh.getParam("base_frame", base_frame);
+  nh.getParam("odom_frame", odom_frame);
 
-    node->param<std::string>("project11/base_link_prefix", base_link_prefix, "");
-    std::cerr << "base_link_prefix: " << base_link_prefix << std::endl;
-    
-    broadcaster = new tf2_ros::TransformBroadcaster;
+  broadcaster = std::shared_ptr<tf2_ros::TransformBroadcaster>(new tf2_ros::TransformBroadcaster);
+  odom_pub = nh.advertise<nav_msgs::Odometry>("odom", 50);
 
-    ros::Subscriber psub;
-    ros::Subscriber hsub;
-    ros::Subscriber posmv_position_sub;
-    ros::Subscriber posmv_orientation_sub;
-
-    if(role == "operator" || role == "observer")
+  XmlRpc::XmlRpcValue sensors_param;
+  
+  ros::NodeHandle nh_private("~");
+  
+  if(nh_private.getParam("sensors", sensors_param))
+  {
+    if(sensors_param.getType() == XmlRpc::XmlRpcValue::TypeArray)
     {
-        psub = node->subscribe("position",10,positionCallback);
-        hsub = node->subscribe("heading",10,headingCallback);
-        posmv_position_sub = node->subscribe("posmv/position",10,posmvPositionCallback);
-        posmv_orientation_sub = node->subscribe("posmv/orientation",10,posmvOrientationCallback);
+      for(int i = 0; i < sensors_param.size(); i++)
+        sensors.push_back(std::shared_ptr<Sensor>(new Sensor(sensors_param[i])));
     }
-    else
-    {    
-        psub = node->subscribe("position",10,positionCallback);
-        hsub = node->subscribe("heading",10,headingCallback);
-        posmv_position_sub = node->subscribe("posmv/position",10,posmvPositionCallback);
-        posmv_orientation_sub = node->subscribe("posmv/orientation",10,posmvOrientationCallback);
-    }
-    
-    position_map_pub = node->advertise<geometry_msgs::PoseStamped>("position_map",10);
-    origin_pub = node->advertise<geographic_msgs::GeoPoint>("project11/origin",1,true);
+  }
 
-    ros::WallTimer originTimer = node->createWallTimer(ros::WallDuration(1.0),originCallback);
-    
-    ros::ServiceServer wgs84_to_earth_service = node->advertiseService("wgs84_to_earth",ll2earth);
-    ros::ServiceServer earth_to_wgs84_service = node->advertiseService("earth_to_wgs84",earth2ll);
-
-    ros::spin();
-    return 0;
+  ros::spin();
+  return 0;
 }
