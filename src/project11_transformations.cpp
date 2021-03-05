@@ -134,7 +134,16 @@ public:
     position_topic = std::string(sensor_param["topics"]["position"]);
     orientation_topic = std::string(sensor_param["topics"]["orientation"]);
     velocity_topic = std::string(sensor_param["topics"]["velocity"]);
-
+    Initialize(position_topic, orientation_topic, velocity_topic);
+  }
+  
+  Sensor()
+  {
+    Initialize("position", "orientation", "velocity");
+  }
+  
+  void Initialize(const std::string &position_topic, const std::string &orientation_topic , const std::string &velocity_topic)
+  {
     ros::NodeHandle nh;
 
     m_position_sub = std::shared_ptr<PositionSub>(new PositionSub(nh, position_topic, 1));
@@ -188,6 +197,7 @@ ros::Duration sensor_timeout(1.0);
 std::string base_frame = "base_link";
 std::string map_frame = "map";
 std::string odom_frame = "odom";
+std::string odom_topic = "odom";
 
 std::shared_ptr<MapFrame> mapFrame;
 std::shared_ptr<tf2_ros::TransformBroadcaster> broadcaster;
@@ -243,12 +253,16 @@ void update()
     
     last_sent_position = position;
   }
+
+  tf2::Quaternion orientation_quat;
   
   if(orientation && (!last_sent_orientation || orientation->header.stamp > last_sent_orientation->header.stamp))
   {
-    double roll,pitch,yaw;
-    tf2::getEulerYPR(orientation->orientation, yaw, pitch, roll);
+    tf2::fromMsg(orientation->orientation, orientation_quat);
     
+    double roll,pitch,yaw;
+    tf2::getEulerYPR(orientation_quat, yaw, pitch, roll);
+       
     geometry_msgs::TransformStamped north_up_base_link_to_level_base_link;
     north_up_base_link_to_level_base_link.header.stamp = orientation->header.stamp;
     north_up_base_link_to_level_base_link.header.frame_id = base_frame+"_north_up";
@@ -266,6 +280,7 @@ void update()
     broadcaster->sendTransform(north_up_base_link_to_base_link);
 
     odom.pose.pose.orientation = orientation->orientation;
+    odom.twist.twist.angular = orientation->angular_velocity;
     
     last_sent_orientation = orientation;
   }
@@ -273,7 +288,9 @@ void update()
   if(velocity && (!last_sent_velocity || velocity->header.stamp > last_sent_velocity->header.stamp))
   {
     odom.child_frame_id = velocity->header.frame_id;
-    odom.twist = velocity->twist;
+    geometry_msgs::TransformStamped odom_base_rotation;
+    odom_base_rotation.transform.rotation = tf2::toMsg(orientation_quat.inverse());
+    tf2::doTransform(velocity->twist.twist.linear, odom.twist.twist.linear, odom_base_rotation);
     odom_pub.publish(odom);
     last_sent_velocity = velocity;
   }
@@ -284,18 +301,19 @@ int main(int argc, char **argv)
 {
   ros::init(argc, argv, "project11_transformations");
     
-  ros::NodeHandle nh;
+  ros::NodeHandle nh_private("~");
   
-  nh.getParam("map_frame", map_frame);
-  nh.getParam("base_frame", base_frame);
-  nh.getParam("odom_frame", odom_frame);
+  nh_private.getParam("map_frame", map_frame);
+  nh_private.getParam("base_frame", base_frame);
+  nh_private.getParam("odom_frame", odom_frame);
+  nh_private.getParam("odom_topic", odom_topic);
 
   broadcaster = std::shared_ptr<tf2_ros::TransformBroadcaster>(new tf2_ros::TransformBroadcaster);
-  odom_pub = nh.advertise<nav_msgs::Odometry>("odom", 50);
+
+  ros::NodeHandle nh;
+  odom_pub = nh.advertise<nav_msgs::Odometry>(odom_topic, 50);
 
   XmlRpc::XmlRpcValue sensors_param;
-  
-  ros::NodeHandle nh_private("~");
   
   if(nh_private.getParam("sensors", sensors_param))
   {
@@ -305,6 +323,10 @@ int main(int argc, char **argv)
         sensors.push_back(std::shared_ptr<Sensor>(new Sensor(sensors_param[i])));
     }
   }
+  
+  // add a default sensor in none have been found
+  if(sensors.empty())
+    sensors.push_back(std::shared_ptr<Sensor>(new Sensor()));
 
   ros::spin();
   return 0;
