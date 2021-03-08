@@ -1,6 +1,6 @@
 # Project11 Transformations
 
-This nodes listens to Motion Reference Unit topics and publishes transforms to `/tf`. Odometry is also published.
+This ROS node listens to Motion Reference Unit topics and publishes transforms to `/tf`. Odometry is also published.
 
 Multiple sensors can be configured in a priority list and the node can fallback to secondary sensors if the primary one stops providing data.
 

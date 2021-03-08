@@ -2,6 +2,7 @@
 #define LOCAL_SERVICES_H
 
 #include <ros/ros.h>
+#include <tf2_ros/transform_listener.h>
 #include "geographic_msgs/GeoPoint.h"
 #include "geometry_msgs/Point.h"
 #include "project11/utils.h"
@@ -9,70 +10,67 @@
 
 namespace project11
 {
-    /// Provide the same transformations available as ROS services, but in the local process to reduce overhead.
-    class Transformations
-    {
-    public:
-        Transformations(ros::NodeHandle &node):m_origin(NAN,NAN,0.0)
-        {
-            m_origin_sub = node.subscribe("project11/origin", 1, &Transformations::originCallback, this);
-        }
+  /// Provide the same transformations available as ROS services, but in the local process to reduce overhead.
+  class Transformations
+  {
+  public:
+      Transformations():m_tf_listener(m_tf_buffer)
+      {
+      }
+      
+      bool canTransform(std::string map_frame="map")
+      {
+        return m_tf_buffer.canTransform("earth", map_frame, ros::Time(0), ros::Duration(0.5));
+      }
 
-        Transformations():m_origin(NAN,NAN,0.0)
+      geometry_msgs::Point wgs84_to_map(geographic_msgs::GeoPoint const &position, std::string map_frame="map")
+      {
+        geometry_msgs::Point ret;
+        try
         {
+          geometry_msgs::TransformStamped t = m_tf_buffer.lookupTransform(map_frame,"earth",ros::Time(0));
+          LatLongDegrees p_ll;
+          fromMsg(position, p_ll);
+          ECEF p_ecef = p_ll;
+          geometry_msgs::Point in;
+          toMsg(p_ecef, in);
+          tf2::doTransform(in,ret,t);
         }
-
-        bool haveOrigin() const
+        catch (tf2::TransformException &ex)
         {
-            return !isnan(m_origin[0]) && !isnan(m_origin[1]);
+          ROS_WARN_STREAM("Transformations: " << ex.what());
         }
-        
-        geometry_msgs::Point wgs84_to_map(geographic_msgs::GeoPoint const &position)
-        {
-            geometry_msgs::Point ret;
-            if(haveOrigin())
-            {
-                LatLongDegrees p_ll;
-                fromMsg(position, p_ll);
-                ECEF p_ecef(p_ll);
-        
-                Point position_map = m_geoReference.toLocal(p_ecef);
-                toMsg(position_map, ret);
-            }
-            return ret;
-        }
-        
-        geographic_msgs::GeoPoint map_to_wgs84(geometry_msgs::Point const &point)
-        {
-            geographic_msgs::GeoPoint ret;
-            if(haveOrigin())
-            {
-                Point position(point.x, point.y, point.z);
-                LatLongDegrees latlon = m_geoReference.toLatLong(position);
-                toMsg(latlon, ret);
-            }
-            return ret;
-        }
-        
-        LatLongDegrees const &origin() const
-        {
-            return m_origin;
-        }
-
+        return ret;
+      }
+      
+      geographic_msgs::GeoPoint map_to_wgs84(geometry_msgs::Point const &point, std::string map_frame="map")
+      {
+          geographic_msgs::GeoPoint ret;
+          try
+          {
+            geometry_msgs::TransformStamped t = m_tf_buffer.lookupTransform("earth",map_frame,ros::Time(0));
+            geometry_msgs::Point out;
+            tf2::doTransform(point,out,t);
+            ECEF out_ecef;
+            fromMsg(out,out_ecef);
+            LatLongDegrees latlon = out_ecef;
+            toMsg(latlon, ret);
+          }
+          catch (tf2::TransformException &ex)
+          {
+            ROS_WARN_STREAM("Transformations: " << ex.what());
+          }
+          return ret;
+      }
+      
+      const tf2_ros::Buffer& operator()() const
+      {
+        return m_tf_buffer;
+      }
+      
     private:
-        void originCallback(const geographic_msgs::GeoPoint::ConstPtr& msg)
-        {
-            if (m_origin[0] != msg->latitude || m_origin[1] != msg->longitude)
-            {
-                m_origin[0] = msg->latitude;
-                m_origin[1] = msg->longitude;
-                m_geoReference = ENUFrame(m_origin);
-            }
-        }
-        
-        ros::Subscriber m_origin_sub;
-        LatLongDegrees m_origin;
-        ENUFrame m_geoReference;
+      tf2_ros::Buffer m_tf_buffer;
+      tf2_ros::TransformListener m_tf_listener;
     };
 }
 
