@@ -13,10 +13,9 @@
   <depend>roscpp</depend>
   <depend>tf2</depend>
   <depend>tf2_ros</depend>
-  <depend>marine_msgs</depend>
+  <depend>sensor_msgs</depend>
   <depend>nav_msgs</depend>
   <depend>message_generation</depend>
-  <depend>geodesy</depend>
 
   <!-- The export tag contains other, unspecified, tags -->
   <export>

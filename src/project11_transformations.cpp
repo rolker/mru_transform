@@ -192,6 +192,11 @@ sensor_msgs::NavSatFix::ConstPtr last_sent_position;
 sensor_msgs::Imu::ConstPtr last_sent_orientation;
 geometry_msgs::TwistWithCovarianceStamped::ConstPtr last_sent_velocity;
 
+// replublish selected nav messages
+ros::Publisher position_pub;
+ros::Publisher orientation_pub;
+ros::Publisher velocity_pub;
+
 ros::Duration sensor_timeout(1.0);
 
 std::string base_frame = "base_link";
@@ -236,6 +241,8 @@ void update()
       mapFrame = std::shared_ptr<MapFrame>(new MapFrame(datum, map_frame, odom_frame, broadcaster, ros::Duration(2.0) ));
     }
     
+    position_pub.publish(position);
+    
     p11::LatLongDegrees p;
     p11::fromMsg(*position, p);
     p11::Point position_map = mapFrame->toLocal(p);
@@ -258,6 +265,8 @@ void update()
   
   if(orientation && (!last_sent_orientation || orientation->header.stamp > last_sent_orientation->header.stamp))
   {
+    orientation_pub.publish(orientation);
+
     tf2::fromMsg(orientation->orientation, orientation_quat);
     
     double roll,pitch,yaw;
@@ -287,6 +296,7 @@ void update()
   
   if(velocity && (!last_sent_velocity || velocity->header.stamp > last_sent_velocity->header.stamp))
   {
+    velocity_pub.publish(velocity);
     odom.child_frame_id = velocity->header.frame_id;
     geometry_msgs::TransformStamped odom_base_rotation;
     odom_base_rotation.transform.rotation = tf2::toMsg(orientation_quat.inverse());
@@ -328,6 +338,11 @@ int main(int argc, char **argv)
   if(sensors.empty())
     sensors.push_back(std::shared_ptr<Sensor>(new Sensor()));
 
+  // publishers for the selected messages. This should allow subscribers to get the best available from a single set of topics
+  position_pub = nh.advertise<sensor_msgs::NavSatFix>("nav/position",10);
+  orientation_pub = nh.advertise<sensor_msgs::Imu>("nav/orientation",10);
+  velocity_pub = nh.advertise<geometry_msgs::TwistWithCovarianceStamped>("nav/velocity",10);
+  
   ros::spin();
   return 0;
 }

@@ -12,10 +12,11 @@ find_package(catkin REQUIRED COMPONENTS
   roscpp
   tf2
   tf2_ros
-  marine_msgs
-  geodesy
   message_generation
   nav_msgs
+  sensor_msgs
+  geometry_msgs
+  geographic_msgs
 )
 
 ## Generate services in the 'srv' folder
@@ -30,16 +31,13 @@ add_service_files(
 ## Generate added messages and services with any dependencies listed here
 generate_messages(
   DEPENDENCIES
-  std_msgs  # Or other packages containing msgs
+  std_msgs 
   geometry_msgs
   geographic_msgs
 )
 
 catkin_package(
-    INCLUDE_DIRS include
-#  LIBRARIES project11_transformations
     CATKIN_DEPENDS project11 roscpp tf2 tf2_ros
-#  DEPENDS system_lib
 )
 
 ## Specify additional locations of header files
@@ -50,12 +48,14 @@ include_directories(
 )
 
 add_executable(${PROJECT_NAME}_node src/project11_transformations.cpp)
+add_executable(sensor_sync_node src/sensor_sync.cpp)
 
 add_dependencies(${PROJECT_NAME}_node ${PROJECT_NAME}_generate_messages_cpp)
-add_dependencies(${PROJECT_NAME}_node marine_msgs_generate_messages_cpp)
 
-## Specify libraries to link a library or executable target against
 target_link_libraries(${PROJECT_NAME}_node
+  ${catkin_LIBRARIES}
+)
+target_link_libraries(sensor_sync_node
   ${catkin_LIBRARIES}
 )
 
