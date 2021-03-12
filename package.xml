@@ -1,8 +1,8 @@
 <?xml version="1.0"?>
 <package format="2">
-  <name>project11_transformations</name>
+  <name>mru_transform</name>
   <version>0.0.0</version>
-  <description>The project11_transformations package</description>
+  <description>The mru_transform package</description>
 
   <maintainer email="roland@ccom.unh.edu">Roland Arsenault</maintainer>
 

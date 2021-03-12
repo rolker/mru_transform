@@ -17,10 +17,10 @@
 
 #include "project11/utils.h"
 
-#include "project11_transformations/LatLongToEarth.h"
-#include "project11_transformations/LatLongToMap.h"
-#include "project11_transformations/EarthToLatLong.h"
-#include "project11_transformations/MapToLatLong.h"
+#include "mru_transform/LatLongToEarth.h"
+#include "mru_transform/LatLongToMap.h"
+#include "mru_transform/EarthToLatLong.h"
+#include "mru_transform/MapToLatLong.h"
 
 namespace p11 = project11;
 
@@ -94,7 +94,7 @@ private:
     }
   }
 
-  bool ll2map(project11_transformations::LatLongToMap::Request &req, project11_transformations::LatLongToMap::Response &res)
+  bool ll2map(mru_transform::LatLongToMap::Request &req, mru_transform::LatLongToMap::Response &res)
   {
       p11::LatLongDegrees p_ll;
       p11::fromMsg(req.wgs84.position, p_ll); 
@@ -108,7 +108,7 @@ private:
       return true;
   }
 
-  bool map2ll(project11_transformations::MapToLatLong::Request &req, project11_transformations::MapToLatLong::Response &res)
+  bool map2ll(mru_transform::MapToLatLong::Request &req, mru_transform::MapToLatLong::Response &res)
   {
       p11::Point position;
       p11::fromMsg(req.map.point, position);
@@ -309,7 +309,7 @@ void update()
 
 int main(int argc, char **argv)
 {
-  ros::init(argc, argv, "project11_transformations");
+  ros::init(argc, argv, "mru_transform");
     
   ros::NodeHandle nh_private("~");
   

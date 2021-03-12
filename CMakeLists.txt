@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 2.8.3)
-project(project11_transformations)
+project(mru_transform)
 
 ## Compile as C++11, supported in ROS Kinetic and newer
 add_compile_options(-std=c++11)
@@ -47,7 +47,7 @@ include_directories(
     ${catkin_INCLUDE_DIRS}
 )
 
-add_executable(${PROJECT_NAME}_node src/project11_transformations.cpp)
+add_executable(${PROJECT_NAME}_node src/mru_transform.cpp)
 add_executable(sensor_sync_node src/sensor_sync.cpp)
 
 add_dependencies(${PROJECT_NAME}_node ${PROJECT_NAME}_generate_messages_cpp)
