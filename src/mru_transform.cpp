@@ -10,6 +10,7 @@
 
 #include <geometry_msgs/TransformStamped.h>
 #include <nav_msgs/Odometry.h>
+#include <std_msgs/String.h>
 
 #include <sensor_msgs/NavSatFix.h>
 #include <sensor_msgs/Imu.h>
@@ -130,11 +131,12 @@ class Sensor
 public:
   Sensor(XmlRpc::XmlRpcValue const &sensor_param)
   {
-    std::string position_topic, orientation_topic, velocity_topic;
+    std::string position_topic, orientation_topic, velocity_topic, name;
     position_topic = std::string(sensor_param["topics"]["position"]);
     orientation_topic = std::string(sensor_param["topics"]["orientation"]);
     velocity_topic = std::string(sensor_param["topics"]["velocity"]);
-    Initialize(position_topic, orientation_topic, velocity_topic);
+    name = std::string(sensor_param["name"]);
+    Initialize(position_topic, orientation_topic, velocity_topic, name);
   }
   
   Sensor()
@@ -142,7 +144,7 @@ public:
     Initialize("position", "orientation", "velocity");
   }
   
-  void Initialize(const std::string &position_topic, const std::string &orientation_topic , const std::string &velocity_topic)
+  void Initialize(const std::string &position_topic, const std::string &orientation_topic , const std::string &velocity_topic, std::string name="default")
   {
     ros::NodeHandle nh;
 
@@ -150,10 +152,14 @@ public:
     m_orientation_sub =  std::shared_ptr<OrientationSub>(new OrientationSub(nh, orientation_topic, 1));
     m_velocity_sub = std::shared_ptr<VelocitySub>(new VelocitySub(nh, velocity_topic, 1));
 
+    m_name = name;
+
     m_sync = std::shared_ptr<SyncType>(new SyncType(*m_position_sub, *m_orientation_sub, *m_velocity_sub, 10));
     m_sync->registerCallback(boost::bind(&Sensor::callback, this, _1, _2, _3));
   }
-  
+
+  const std::string &getName() const {return m_name;}
+
   sensor_msgs::NavSatFix::ConstPtr lastPositionMessage() const {return m_last_position;}
   sensor_msgs::Imu::ConstPtr lastOrientationMessage() const {return m_last_orientation;}
   geometry_msgs::TwistWithCovarianceStamped::ConstPtr lastVelocityMessage() const {return m_last_velocity;}
@@ -183,6 +189,7 @@ private:
   sensor_msgs::NavSatFix::ConstPtr m_last_position;
   sensor_msgs::Imu::ConstPtr m_last_orientation;
   geometry_msgs::TwistWithCovarianceStamped::ConstPtr m_last_velocity;
+  std::string m_name;
 };
 
 // list of sensors, in order of priority
@@ -196,6 +203,7 @@ geometry_msgs::TwistWithCovarianceStamped::ConstPtr last_sent_velocity;
 ros::Publisher position_pub;
 ros::Publisher orientation_pub;
 ros::Publisher velocity_pub;
+ros::Publisher active_sensor_pub;
 
 ros::Duration sensor_timeout(1.0);
 
@@ -226,7 +234,12 @@ void update()
     if(!velocity && s->lastVelocityMessage() && now - s->lastVelocityMessage()->header.stamp < sensor_timeout)
       velocity = s->lastVelocityMessage();
     if(position && orientation && velocity)
+    {
+      std_msgs::String active;
+      active.data = s->getName();
+      active_sensor_pub.publish(active);
       break;
+    }
   }
 
   nav_msgs::Odometry odom;
@@ -342,6 +355,7 @@ int main(int argc, char **argv)
   position_pub = nh.advertise<sensor_msgs::NavSatFix>("nav/position",10);
   orientation_pub = nh.advertise<sensor_msgs::Imu>("nav/orientation",10);
   velocity_pub = nh.advertise<geometry_msgs::TwistWithCovarianceStamped>("nav/velocity",10);
+  active_sensor_pub = nh.advertise<std_msgs::String>("nav/active_sensor",10);
   
   ros::spin();
   return 0;
