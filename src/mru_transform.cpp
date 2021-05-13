@@ -247,7 +247,7 @@ void update()
   
   if(position && (!last_sent_position || position->header.stamp > last_sent_position->header.stamp))
   {
-    if(!mapFrame)
+    if(!mapFrame && position->status.status >= 0)
     {
       p11::LatLongDegrees datum;
       p11::fromMsg(*position,datum);
