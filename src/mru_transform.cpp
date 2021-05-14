@@ -258,6 +258,8 @@ void update()
     
     p11::LatLongDegrees p;
     p11::fromMsg(*position, p);
+    if (std::isnan(p[2]))
+      p[2] = 0.0;
     p11::Point position_map = mapFrame->toLocal(p);
     
     geometry_msgs::TransformStamped map_to_north_up_base_link;
