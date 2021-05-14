@@ -247,19 +247,18 @@ void update()
   
   if(position && (!last_sent_position || position->header.stamp > last_sent_position->header.stamp))
   {
-    if(!mapFrame && position->status.status >= 0)
-    {
-      p11::LatLongDegrees datum;
-      p11::fromMsg(*position,datum);
-      mapFrame = std::shared_ptr<MapFrame>(new MapFrame(datum, map_frame, odom_frame, broadcaster, ros::Duration(2.0) ));
-    }
-    
-    position_pub.publish(position);
-    
     p11::LatLongDegrees p;
     p11::fromMsg(*position, p);
     if (std::isnan(p[2]))
       p[2] = 0.0;
+
+    if(!mapFrame && position->status.status >= 0)
+    {
+      mapFrame = std::shared_ptr<MapFrame>(new MapFrame(p, map_frame, odom_frame, broadcaster, ros::Duration(2.0) ));
+    }
+    
+    position_pub.publish(position);
+    
     p11::Point position_map = mapFrame->toLocal(p);
     
     geometry_msgs::TransformStamped map_to_north_up_base_link;
