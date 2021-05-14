@@ -227,7 +227,7 @@ void update()
   // loop through the sensors until we get an unexpired message of each type
   for(auto s: sensors)
   {
-    if(!position && s->lastPositionMessage() && now - s->lastPositionMessage()->header.stamp < sensor_timeout)
+    if(!position && s->lastPositionMessage() && now - s->lastPositionMessage()->header.stamp < sensor_timeout && s->lastPositionMessage()->status.status >= 0)
       position = s->lastPositionMessage();
     if(!orientation && s->lastOrientationMessage() && now - s->lastOrientationMessage()->header.stamp < sensor_timeout)
       orientation = s->lastOrientationMessage();
