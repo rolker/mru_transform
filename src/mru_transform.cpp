@@ -58,7 +58,7 @@ public:
     m_wgs84_to_map_service = nh.advertiseService("wgs84_to_map", &MapFrame::ll2map, this);
     m_map_to_wgs84_service = nh.advertiseService("map_to_wgs84", &MapFrame::map2ll, this);
     
-    m_timer = nh.createTimer(broadcast_interval, &MapFrame::timerCallback, this);
+    //m_timer = nh.createTimer(broadcast_interval, &MapFrame::timerCallback, this);
   }
 
   p11::Point toLocal(p11::LatLongDegrees const &p) const
@@ -70,6 +70,16 @@ public:
   {
       m_broadcaster->sendTransform(m_earth_to_map_transform);
       m_broadcaster->sendTransform(m_map_to_odom_transform);
+  }
+
+  std::vector< geometry_msgs::TransformStamped > getTransforms(ros::Time time)
+  {
+    std::vector< geometry_msgs::TransformStamped > ret;
+    m_earth_to_map_transform.header.stamp = time;
+    m_map_to_odom_transform.header.stamp = time;
+    ret.push_back(m_earth_to_map_transform);
+    ret.push_back(m_map_to_odom_transform);
+    return ret;
   }
   
 private:
@@ -250,7 +260,9 @@ void update()
 
   nav_msgs::Odometry odom;
   odom.header.frame_id = odom_frame;
-  
+
+  std::vector< geometry_msgs::TransformStamped > transforms;
+
   if(position && (!last_sent_position || position->header.stamp > last_sent_position->header.stamp))
   {
     p11::LatLongDegrees p;
@@ -264,7 +276,8 @@ void update()
     }
     
     if(mapFrame)
-      mapFrame->sendTransforms();
+      transforms = mapFrame->getTransforms(position->header.stamp);
+      //mapFrame->sendTransforms();
 
     position_pub.publish(position);
     
@@ -276,7 +289,8 @@ void update()
     map_to_north_up_base_link.child_frame_id = base_frame+"_north_up";
     p11::toMsg(position_map, map_to_north_up_base_link.transform.translation);
     map_to_north_up_base_link.transform.rotation.w = 1.0;
-    broadcaster->sendTransform(map_to_north_up_base_link);
+    //broadcaster->sendTransform(map_to_north_up_base_link);
+    transforms.push_back(map_to_north_up_base_link);
     
     p11::toMsg(position_map, odom.pose.pose.position);
     odom.header.stamp = position->header.stamp;
@@ -302,21 +316,24 @@ void update()
     tf2::Quaternion heading_quat;
     heading_quat.setRPY(0.0,0.0,yaw);
     north_up_base_link_to_level_base_link.transform.rotation = tf2::toMsg(heading_quat);
-    broadcaster->sendTransform(north_up_base_link_to_level_base_link);
+    //broadcaster->sendTransform(north_up_base_link_to_level_base_link);
+    transforms.push_back(north_up_base_link_to_level_base_link);
     
     geometry_msgs::TransformStamped north_up_base_link_to_base_link;
     north_up_base_link_to_base_link.header.stamp = orientation->header.stamp;
     north_up_base_link_to_base_link.header.frame_id = base_frame+"_north_up";
     north_up_base_link_to_base_link.child_frame_id = base_frame;
     north_up_base_link_to_base_link.transform.rotation = orientation->orientation;
-    broadcaster->sendTransform(north_up_base_link_to_base_link);
+    //broadcaster->sendTransform(north_up_base_link_to_base_link);
+    transforms.push_back(north_up_base_link_to_base_link);
 
     odom.pose.pose.orientation = orientation->orientation;
     odom.twist.twist.angular = orientation->angular_velocity;
     
     last_sent_orientation = orientation;
   }
-  
+  broadcaster->sendTransform(transforms);
+
   if(velocity && (!last_sent_velocity || velocity->header.stamp > last_sent_velocity->header.stamp))
   {
     velocity_pub.publish(velocity);
