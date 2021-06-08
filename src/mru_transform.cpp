@@ -254,7 +254,7 @@ void update()
 
     if(!mapFrame && position->status.status >= 0)
     {
-      mapFrame = std::shared_ptr<MapFrame>(new MapFrame(p, map_frame, odom_frame, broadcaster, ros::Duration(2.0) ));
+      mapFrame = std::shared_ptr<MapFrame>(new MapFrame(p, map_frame, odom_frame, broadcaster, ros::Duration(0.5) ));
     }
     
     position_pub.publish(position);
