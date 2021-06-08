@@ -223,6 +223,9 @@ ros::Publisher active_sensor_pub;
 
 ros::Duration sensor_timeout(1.0);
 
+ros::Duration publish_period(0.1);
+ros::Time last_publish_time;
+
 std::string base_frame = "base_link";
 std::string map_frame = "map";
 std::string odom_frame = "odom";
@@ -332,7 +335,12 @@ void update()
     
     last_sent_orientation = orientation;
   }
-  broadcaster->sendTransform(transforms);
+
+  if(last_publish_time+publish_period < now)
+  {
+    broadcaster->sendTransform(transforms);
+    last_publish_time = now;
+  }
 
   if(velocity && (!last_sent_velocity || velocity->header.stamp > last_sent_velocity->header.stamp))
   {
