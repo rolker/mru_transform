@@ -65,6 +65,12 @@ public:
   {
     return m_mapFrame.toLocal(p);
   }
+
+  void sendTransforms()
+  {
+      m_broadcaster->sendTransform(m_earth_to_map_transform);
+      m_broadcaster->sendTransform(m_map_to_odom_transform);
+  }
   
 private:
   p11::ENUFrame m_mapFrame;
@@ -94,11 +100,6 @@ private:
     }
   }
 
-  void sendTransforms()
-  {
-      m_broadcaster->sendTransform(m_earth_to_map_transform);
-      m_broadcaster->sendTransform(m_map_to_odom_transform);
-  }
 
   bool ll2map(mru_transform::LatLongToMap::Request &req, mru_transform::LatLongToMap::Response &res)
   {
