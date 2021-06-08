@@ -89,10 +89,15 @@ private:
     if(a_bit_later > m_earth_to_map_transform.header.stamp)
     {
       m_earth_to_map_transform.header.stamp = a_bit_later;
-      m_broadcaster->sendTransform(m_earth_to_map_transform);
       m_map_to_odom_transform.header.stamp = a_bit_later;
-      m_broadcaster->sendTransform(m_map_to_odom_transform);
+      sendTransforms();
     }
+  }
+
+  void sendTransforms()
+  {
+      m_broadcaster->sendTransform(m_earth_to_map_transform);
+      m_broadcaster->sendTransform(m_map_to_odom_transform);
   }
 
   bool ll2map(mru_transform::LatLongToMap::Request &req, mru_transform::LatLongToMap::Response &res)
@@ -257,6 +262,9 @@ void update()
       mapFrame = std::shared_ptr<MapFrame>(new MapFrame(p, map_frame, odom_frame, broadcaster, ros::Duration(0.5) ));
     }
     
+    if(mapFrame)
+      mapFrame->sendTransforms();
+
     position_pub.publish(position);
     
     p11::Point position_map = mapFrame->toLocal(p);
