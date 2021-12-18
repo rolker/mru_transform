@@ -75,8 +75,8 @@ public:
   std::vector< geometry_msgs::TransformStamped > getTransforms(ros::Time time)
   {
     std::vector< geometry_msgs::TransformStamped > ret;
-    m_earth_to_map_transform.header.stamp = time;
-    m_map_to_odom_transform.header.stamp = time;
+    m_earth_to_map_transform.header.stamp = time+m_broadcast_interval;
+    m_map_to_odom_transform.header.stamp = time+m_broadcast_interval;
     ret.push_back(m_earth_to_map_transform);
     ret.push_back(m_map_to_odom_transform);
     return ret;
