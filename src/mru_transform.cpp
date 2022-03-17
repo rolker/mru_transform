@@ -345,10 +345,10 @@ void update()
   if(velocity && (!last_sent_velocity || velocity->header.stamp > last_sent_velocity->header.stamp))
   {
     velocity_pub.publish(velocity);
-    odom.child_frame_id = velocity->header.frame_id;
     geometry_msgs::TransformStamped odom_base_rotation;
     odom_base_rotation.transform.rotation = tf2::toMsg(orientation_quat.inverse());
     tf2::doTransform(velocity->twist.twist.linear, odom.twist.twist.linear, odom_base_rotation);
+    odom.child_frame_id = base_frame;
     odom_pub.publish(odom);
     last_sent_velocity = velocity;
   }
