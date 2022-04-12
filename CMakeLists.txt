@@ -47,7 +47,13 @@ include_directories(
     ${catkin_INCLUDE_DIRS}
 )
 
-add_executable(${PROJECT_NAME}_node src/mru_transform.cpp)
+set( SOURCES
+  src/map_frame.cpp
+  src/mru_transform.cpp 
+  src/sensor.cpp
+)
+
+add_executable(${PROJECT_NAME}_node src/mru_transform_node.cpp ${SOURCES})
 add_executable(sensor_sync_node src/sensor_sync.cpp)
 
 add_dependencies(${PROJECT_NAME}_node ${PROJECT_NAME}_generate_messages_cpp)
