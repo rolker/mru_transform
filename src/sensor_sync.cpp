@@ -66,7 +66,7 @@ template<typename T> void run(ros::NodeHandle& n)
 
 int main(int argc, char **argv)
 {
-    ros::init(argc, argv, "echo_helm");
+    ros::init(argc, argv, "sensor_sync");
     ros::NodeHandle n;
 
     std::string out_topic_prefix;
