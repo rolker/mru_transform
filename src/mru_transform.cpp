@@ -24,6 +24,9 @@ MRUTransform::MRUTransform(ros::NodeHandle& nh, ros::NodeHandle& nh_private)
   nh_private.getParam("base_frame", base_frame_);
   nh_private.getParam("odom_frame", odom_frame_);
   nh_private.getParam("odom_topic", odom_topic_);
+  double st = sensor_timeout_.toSec();
+  if(nh_private.getParam("sensor_timeout", st))
+    sensor_timeout_ = ros::Duration(st);
 
   broadcaster_ = std::shared_ptr<tf2_ros::TransformBroadcaster>(new tf2_ros::TransformBroadcaster);
 
@@ -68,6 +71,7 @@ void MRUTransform::update()
   // loop through the sensors until we get an unexpired message of each type
   for(auto s: sensors_)
   {
+    ROS_DEBUG_STREAM(now << " sensor: " << s->getName() << " p: " << *s->lastPositionMessage() << " o: " << *s->lastOrientationMessage() << " v: " << *s->lastVelocityMessage());
     if(!position && s->lastPositionMessage() && now - s->lastPositionMessage()->header.stamp < sensor_timeout_ && s->lastPositionMessage()->status.status >= 0)
       position = s->lastPositionMessage();
     if(!orientation && s->lastOrientationMessage() && now - s->lastOrientationMessage()->header.stamp < sensor_timeout_)
