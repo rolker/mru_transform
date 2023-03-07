@@ -15,11 +15,9 @@ namespace mru_transform
 class MapFrame
 {
 public:
-  MapFrame(project11::LatLongDegrees const &datum, std::string const &map_frame, std::string const &odom_frame, std::shared_ptr<tf2_ros::TransformBroadcaster> broadcaster, ros::Duration broadcast_interval);
+  MapFrame(project11::LatLongDegrees const &datum, std::string const &map_frame, std::string const &odom_frame);
 
   project11::Point toLocal(project11::LatLongDegrees const &p) const;
-
-  void sendTransforms();
 
   std::vector< geometry_msgs::TransformStamped > getTransforms(ros::Time time);
   
@@ -29,15 +27,8 @@ private:
   geometry_msgs::TransformStamped earth_to_map_transform_;
   geometry_msgs::TransformStamped map_to_odom_transform_;
   
-  std::shared_ptr<tf2_ros::TransformBroadcaster> broadcaster_;
-  ros::Duration broadcast_interval_;
-  ros::Timer timer_;
-
   ros::ServiceServer wgs84_to_map_service_;
   ros::ServiceServer map_to_wgs84_service_;
-
-  void timerCallback(const ros::TimerEvent &timerEvent);
-
 
   bool ll2map(mru_transform::LatLongToMap::Request &req, mru_transform::LatLongToMap::Response &res);
 

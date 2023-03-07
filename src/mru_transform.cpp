@@ -101,7 +101,7 @@ void MRUTransform::update()
 
     if(!mapFrame_ && position->status.status >= 0)
     {
-      mapFrame_ = std::shared_ptr<MapFrame>(new MapFrame(p, map_frame_, odom_frame_, broadcaster_, ros::Duration(0.5) ));
+      mapFrame_ = std::shared_ptr<MapFrame>(new MapFrame(p, map_frame_, odom_frame_));
     }
     
     if(mapFrame_)
@@ -118,7 +118,6 @@ void MRUTransform::update()
     map_to_north_up_base_link.child_frame_id = base_frame_+"_north_up";
     p11::toMsg(position_map, map_to_north_up_base_link.transform.translation);
     map_to_north_up_base_link.transform.rotation.w = 1.0;
-    //broadcaster->sendTransform(map_to_north_up_base_link);
     transforms.push_back(map_to_north_up_base_link);
     
     p11::toMsg(position_map, odom.pose.pose.position);
@@ -145,7 +144,6 @@ void MRUTransform::update()
     tf2::Quaternion heading_quat;
     heading_quat.setRPY(0.0,0.0,yaw);
     north_up_base_link_to_level_base_link.transform.rotation = tf2::toMsg(heading_quat);
-    //broadcaster->sendTransform(north_up_base_link_to_level_base_link);
     transforms.push_back(north_up_base_link_to_level_base_link);
     
     geometry_msgs::TransformStamped north_up_base_link_to_base_link;
@@ -153,7 +151,6 @@ void MRUTransform::update()
     north_up_base_link_to_base_link.header.frame_id = base_frame_+"_north_up";
     north_up_base_link_to_base_link.child_frame_id = base_frame_;
     north_up_base_link_to_base_link.transform.rotation = orientation->orientation;
-    //broadcaster->sendTransform(north_up_base_link_to_base_link);
     transforms.push_back(north_up_base_link_to_base_link);
 
     odom.pose.pose.orientation = orientation->orientation;
