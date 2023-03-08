@@ -3,17 +3,14 @@
 #include <sensor_msgs/NavSatFix.h>
 #include <sensor_msgs/Imu.h>
 #include <geometry_msgs/TwistWithCovarianceStamped.h>
-#include <std_msgs/String.h>
 #include <nav_msgs/Odometry.h>
 #include <geometry_msgs/TransformStamped.h>
-
 
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.h>
 #include <tf2/utils.h>
 
 namespace p11 = project11;
-
 
 namespace mru_transform
 {
@@ -40,143 +37,110 @@ MRUTransform::MRUTransform(ros::NodeHandle& nh, ros::NodeHandle& nh_private)
     {
       for(int i = 0; i < sensors_param.size(); i++)
       {
-        sensors_.push_back(std::shared_ptr<Sensor>(new Sensor(sensors_param[i])));
-        sensors_.back()->setCallback([this]()->void{this->update();});
+        position_sensors_.push_back(std::make_shared<PositionSensor>(sensors_param[i], [this](ros::Time stamp)->void{this->updatePosition(stamp);}));
+        orientation_sensors_.push_back(std::make_shared<OrientationSensor>(sensors_param[i], [this](ros::Time stamp)->void{this->updateOrientation(stamp);}));
+        velocity_sensors_.push_back(std::make_shared<VelocitySensor>(sensors_param[i], [this](ros::Time stamp)->void{this->updateVelocity(stamp);}));
       }
     }
   }
   
-  // add a default sensor in none have been found
-  if(sensors_.empty())
+  // add a default sensor if none have been found
+  if(position_sensors_.empty())
   {
-    sensors_.push_back(std::shared_ptr<Sensor>(new Sensor()));
-    sensors_.back()->setCallback([this]()->void{this->update();});
+    position_sensors_.push_back(std::make_shared<PositionSensor>([this](ros::Time stamp)->void{this->updatePosition(stamp);}));
+  }
+  if(orientation_sensors_.empty())
+  {
+    orientation_sensors_.push_back(std::make_shared<OrientationSensor>([this](ros::Time stamp)->void{this->updateOrientation(stamp);}));
+  }
+  if(velocity_sensors_.empty())
+  {
+    velocity_sensors_.push_back(std::make_shared<VelocitySensor>([this](ros::Time stamp)->void{this->updateVelocity(stamp);}));
   }
 
-  // publishers for the selected messages. This should allow subscribers to get the best available from a single set of topics
-  position_pub_ = nh.advertise<sensor_msgs::NavSatFix>("nav/position",10);
-  orientation_pub_ = nh.advertise<sensor_msgs::Imu>("nav/orientation",10);
-  velocity_pub_ = nh.advertise<geometry_msgs::TwistWithCovarianceStamped>("nav/velocity",10);
-  active_sensor_pub_ = nh.advertise<std_msgs::String>("nav/active_sensor",10);
+  for(auto s: std::vector<std::string>({"position", "orientation", "velocity"}))
+    active_sensor_pubs_[s] = nh.advertise<std_msgs::String>("nav/active_sensor/"+s,10);
 }
 
-void MRUTransform::update()
+void MRUTransform::updatePosition(const ros::Time &now)
 {
-  ros::Time now = ros::Time::now();
-  
-  sensor_msgs::NavSatFix::ConstPtr position;
-  sensor_msgs::Imu::ConstPtr orientation;
-  geometry_msgs::TwistWithCovarianceStamped::ConstPtr velocity;
-
-  // loop through the sensors until we get an unexpired message of each type
-  for(auto s: sensors_)
-  {
-    ROS_DEBUG_STREAM(now << " sensor: " << s->getName() << " p: " << *s->lastPositionMessage() << " o: " << *s->lastOrientationMessage() << " v: " << *s->lastVelocityMessage());
-    if(!position && s->lastPositionMessage() && now - s->lastPositionMessage()->header.stamp < sensor_timeout_ && s->lastPositionMessage()->status.status >= 0)
-      position = s->lastPositionMessage();
-    if(!orientation && s->lastOrientationMessage() && now - s->lastOrientationMessage()->header.stamp < sensor_timeout_)
-      orientation = s->lastOrientationMessage();
-    if(!velocity && s->lastVelocityMessage() && now - s->lastVelocityMessage()->header.stamp < sensor_timeout_)
-      velocity = s->lastVelocityMessage();
-    if(position && orientation && velocity)
-    {
-      std_msgs::String active;
-      active.data = s->getName();
-      active_sensor_pub_.publish(active);
-      break;
-    }
-  }
-
-  nav_msgs::Odometry odom;
-  odom.header.frame_id = odom_frame_;
-
-  std::vector< geometry_msgs::TransformStamped > transforms;
-
-  if(position && (!last_sent_position_ || position->header.stamp > last_sent_position_->header.stamp))
+  if(updateLatest(latest_position_, position_sensors_, now))
   {
     p11::LatLongDegrees p;
-    p11::fromMsg(*position, p);
+    p11::fromMsg(latest_position_.position, p);
     if (std::isnan(p[2]))
       p[2] = 0.0;
 
-    if(!mapFrame_ && position->status.status >= 0)
-    {
+    if(!mapFrame_)
       mapFrame_ = std::shared_ptr<MapFrame>(new MapFrame(p, map_frame_, odom_frame_));
-    }
-    
-    if(mapFrame_)
-      transforms = mapFrame_->getTransforms(position->header.stamp);
-      //mapFrame->sendTransforms();
-
-    position_pub_.publish(position);
-    
+    auto transforms = mapFrame_->getTransforms(latest_position_.header.stamp);
     p11::Point position_map = mapFrame_->toLocal(p);
-    
+
     geometry_msgs::TransformStamped map_to_north_up_base_link;
-    map_to_north_up_base_link.header.stamp = position->header.stamp;
+    map_to_north_up_base_link.header.stamp = latest_position_.header.stamp;
     map_to_north_up_base_link.header.frame_id = map_frame_;
     map_to_north_up_base_link.child_frame_id = base_frame_+"_north_up";
     p11::toMsg(position_map, map_to_north_up_base_link.transform.translation);
     map_to_north_up_base_link.transform.rotation.w = 1.0;
     transforms.push_back(map_to_north_up_base_link);
-    
-    p11::toMsg(position_map, odom.pose.pose.position);
-    odom.header.stamp = position->header.stamp;
-    
-    last_sent_position_ = position;
+    broadcaster_->sendTransform(transforms);
+    p11::toMsg(position_map, odom_.pose.pose.position);
   }
+}
 
-  tf2::Quaternion orientation_quat;
-  
-  if(orientation && (!last_sent_orientation_ || orientation->header.stamp > last_sent_orientation_->header.stamp))
+void MRUTransform::updateOrientation(const ros::Time &now)
+{
+  if(updateLatest(latest_orientation_, orientation_sensors_, now))
   {
-    orientation_pub_.publish(orientation);
+    tf2::Quaternion orientation_quat;
 
-    tf2::fromMsg(orientation->orientation, orientation_quat);
+    tf2::fromMsg(latest_orientation_.orientation, orientation_quat);
     
     double roll,pitch,yaw;
     tf2::getEulerYPR(orientation_quat, yaw, pitch, roll);
        
     geometry_msgs::TransformStamped north_up_base_link_to_level_base_link;
-    north_up_base_link_to_level_base_link.header.stamp = orientation->header.stamp;
+    north_up_base_link_to_level_base_link.header.stamp = latest_orientation_.header.stamp;
     north_up_base_link_to_level_base_link.header.frame_id = base_frame_+"_north_up";
     north_up_base_link_to_level_base_link.child_frame_id = base_frame_+"_level";
     tf2::Quaternion heading_quat;
     heading_quat.setRPY(0.0,0.0,yaw);
     north_up_base_link_to_level_base_link.transform.rotation = tf2::toMsg(heading_quat);
+
+    std::vector<geometry_msgs::TransformStamped> transforms;
     transforms.push_back(north_up_base_link_to_level_base_link);
     
     geometry_msgs::TransformStamped north_up_base_link_to_base_link;
-    north_up_base_link_to_base_link.header.stamp = orientation->header.stamp;
+    north_up_base_link_to_base_link.header.stamp = latest_orientation_.header.stamp;
     north_up_base_link_to_base_link.header.frame_id = base_frame_+"_north_up";
     north_up_base_link_to_base_link.child_frame_id = base_frame_;
-    north_up_base_link_to_base_link.transform.rotation = orientation->orientation;
+    north_up_base_link_to_base_link.transform.rotation = latest_orientation_.orientation;
     transforms.push_back(north_up_base_link_to_base_link);
-
-    odom.pose.pose.orientation = orientation->orientation;
-    odom.twist.twist.angular = orientation->angular_velocity;
-    
-    last_sent_orientation_ = orientation;
-  }
-
-  if(last_publish_time_+publish_period_ < now)
-  {
     broadcaster_->sendTransform(transforms);
-    last_publish_time_ = now;
-  }
 
-  if(velocity && (!last_sent_velocity_ || velocity->header.stamp > last_sent_velocity_->header.stamp))
-  {
-    velocity_pub_.publish(velocity);
-    geometry_msgs::TransformStamped odom_base_rotation;
-    odom_base_rotation.transform.rotation = tf2::toMsg(orientation_quat.inverse());
-    tf2::doTransform(velocity->twist.twist.linear, odom.twist.twist.linear, odom_base_rotation);
-    odom.child_frame_id = base_frame_;
-    odom_pub_.publish(odom);
-    last_sent_velocity_ = velocity;
+    odom_.pose.pose.orientation = latest_orientation_.orientation;
+    odom_.twist.twist.angular = latest_orientation_.angular_velocity;
   }
 }
 
+void MRUTransform::updateVelocity(const ros::Time &now)
+{
+  if(updateLatest(latest_velocity_, velocity_sensors_, now))
+  {
+    odom_.header.frame_id = odom_frame_;
+    odom_.header.stamp = latest_velocity_.header.stamp;
+    odom_.child_frame_id = base_frame_;
+
+
+    tf2::Quaternion orientation_quat;
+    tf2::fromMsg(latest_orientation_.orientation, orientation_quat);
+
+    geometry_msgs::TransformStamped odom_base_rotation;
+    odom_base_rotation.transform.rotation = tf2::toMsg(orientation_quat.inverse());
+    tf2::doTransform(latest_velocity_.twist.linear, odom_.twist.twist.linear, odom_base_rotation);
+    odom_pub_.publish(odom_);
+  }
+}
 
 } // namespace mru_transform
 

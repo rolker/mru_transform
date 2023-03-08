@@ -50,7 +50,9 @@ include_directories(
 set( SOURCES
   src/map_frame.cpp
   src/mru_transform.cpp 
-  src/sensor.cpp
+  src/orientation_sensor.cpp
+  src/position_sensor.cpp
+  src/velocity_sensor.cpp
 )
 
 add_executable(${PROJECT_NAME}_node src/mru_transform_node.cpp ${SOURCES})
