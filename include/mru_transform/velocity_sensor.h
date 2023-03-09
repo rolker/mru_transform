@@ -17,6 +17,7 @@ public:
 
 private:
   void twistWithCovarianceCallback(const geometry_msgs::TwistWithCovarianceStamped::ConstPtr& msg);
+  void twistCallback(const geometry_msgs::TwistStamped::ConstPtr& msg);
 
 };
 

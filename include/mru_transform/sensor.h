@@ -6,6 +6,8 @@
 namespace mru_transform
 {
 
+std::string getROSType(std::string topic);
+
 template<class T> 
 class SensorBase
 {

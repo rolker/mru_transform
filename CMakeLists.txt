@@ -52,6 +52,7 @@ set( SOURCES
   src/mru_transform.cpp 
   src/orientation_sensor.cpp
   src/position_sensor.cpp
+  src/sensor.cpp
   src/velocity_sensor.cpp
 )
 
