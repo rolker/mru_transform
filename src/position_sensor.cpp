@@ -22,7 +22,6 @@ void PositionSensor::initialize(const std::string &topic, std::string name, std:
 
 void PositionSensor::navSatFixCallback(const sensor_msgs::NavSatFix::ConstPtr& msg)
 {
-  ROS_INFO_STREAM(msg);
   if(msg->status.status >= 0)
   {
     latest_value_.header = msg->header;
