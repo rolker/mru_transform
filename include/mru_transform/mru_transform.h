@@ -31,7 +31,7 @@ s->lastValue().header.stamp > value.header.stamp)
           value = s->lastValue();
           std_msgs::String active;
           active.data = s->name();
-          active_sensor_pubs_[s->category()].publish(active);
+          active_sensor_pubs_[s->sensor_type].publish(active);
           return true;
         }
     return false;

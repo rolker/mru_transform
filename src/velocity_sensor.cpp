@@ -3,29 +3,32 @@
 namespace mru_transform
 {
 
-VelocitySensor::VelocitySensor(std::function<void(const ros::Time&)> update_callback)
+template <>
+const std::string SensorBase<VelocitySensor>::sensor_type("velocity");
+
+VelocitySensor::VelocitySensor(std::function<void(const ros::Time&)> update_callback):BaseType(update_callback)
 {
-  initialize("velocity", "default", update_callback);
 }
 
-VelocitySensor::VelocitySensor(XmlRpc::XmlRpcValue const &sensor_param, std::function<void(const ros::Time&)> update_callback):BaseType(sensor_param, "velocity", update_callback)
+VelocitySensor::VelocitySensor(XmlRpc::XmlRpcValue const &sensor_param, std::function<void(const ros::Time&)> update_callback):BaseType(sensor_param, update_callback)
 {
-  initialize(topic_, name_, update_callback);
 }
 
-void VelocitySensor::initialize(const std::string &topic, std::string name, std::function<void(const ros::Time&)> update_callback)
+bool VelocitySensor::subscribe(const std::string &topic, const std::string &topic_type)
 {
-  BaseType::initialize(topic, name, "velocity", update_callback);
   ros::NodeHandle nh;
-  auto topic_type = getROSType(nh.resolveName(topic));
 
   if (topic_type == "geometry_msgs/TwistWithCovarianceStamped")
-    subscriber_ = nh.subscribe(topic, 5, &VelocitySensor::twistWithCovarianceCallback, this);
-  else if(topic_type == "geometry_msgs/TwistStamped")
-    subscriber_ = nh.subscribe(topic, 5, &VelocitySensor::twistCallback, this);
-  else
-    ROS_INFO_STREAM("Unsupported velocity topic type for: " << topic << ", type: " << topic_type);
-
+  {
+    subscriber_ = nh.subscribe(topic_, 5, &VelocitySensor::twistWithCovarianceCallback, this);
+    return true;
+  }
+  if(topic_type == "geometry_msgs/TwistStamped")
+  {
+    subscriber_ = nh.subscribe(topic_, 5, &VelocitySensor::twistCallback, this);
+    return true;
+  }
+  return false;
 }
 
 void VelocitySensor::twistWithCovarianceCallback(const geometry_msgs::TwistWithCovarianceStamped::ConstPtr& msg)

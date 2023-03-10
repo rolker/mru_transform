@@ -3,26 +3,45 @@
 namespace mru_transform
 {
 
+template <>
+const std::string SensorBase<OrientationSensor>::sensor_type("orientation");
+
 OrientationSensor::OrientationSensor(std::function<void(const ros::Time&)> update_callback)
+  :BaseType(update_callback)
 {
-  initialize("orientation", "default", update_callback);
 }
 
-OrientationSensor::OrientationSensor(XmlRpc::XmlRpcValue const &sensor_param, std::function<void(const ros::Time&)> update_callback):BaseType(sensor_param, "orientation", update_callback)
+OrientationSensor::OrientationSensor(XmlRpc::XmlRpcValue const &sensor_param, std::function<void(const ros::Time&)> update_callback)
+  :BaseType(sensor_param,  update_callback)
 {
-  initialize(topic_, name_, update_callback);
 }
 
-void OrientationSensor::initialize(const std::string &topic, std::string name, std::function<void(const ros::Time&)> update_callback)
+bool OrientationSensor::subscribe(const std::string &topic, const std::string& topic_type)
 {
-  BaseType::initialize(topic, name, "orientation", update_callback);
   ros::NodeHandle nh;
-  subscriber_ = nh.subscribe(topic, 5, &OrientationSensor::imuCallback, this);
+  if (topic_type == "sensor_msgs/Imu")
+  {
+    subscriber_ = nh.subscribe(topic, 5, &OrientationSensor::imuCallback, this);
+    return true;
+  }
+  if (topic_type == "geometry_msgs/QuaternionStamped")
+  {
+    subscriber_ = nh.subscribe(topic, 5, &OrientationSensor::quaternionCallback, this);
+    return true;
+  }
+  return false;
 }
 
 void OrientationSensor::imuCallback(const sensor_msgs::Imu::ConstPtr& msg)
 {
   latest_value_ = *msg;
+  update_callback_(msg->header.stamp);
+}
+
+void OrientationSensor::quaternionCallback(const geometry_msgs::QuaternionStamped::ConstPtr& msg)
+{
+  latest_value_.header = msg->header;
+  latest_value_.orientation = msg->quaternion;
   update_callback_(msg->header.stamp);
 }
 

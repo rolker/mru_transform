@@ -12,51 +12,56 @@ template<class T>
 class SensorBase
 {
 public:
-  using BaseType = SensorBase<T>;
-  using ValueType = T;
+  static const std::string sensor_type;
 
   const std::string &name() const
   {
     return name_;
   }
 
-  const std::string &category() const
+  const auto &lastValue() const
   {
-    return category_;
-  }
-
-  const T &lastValue() const
-  {
-    return latest_value_;
+    return static_cast<const T*>(this)->latest_value_;
   }
 
 protected:
-  SensorBase()
+  using BaseType = SensorBase<T>;
+  SensorBase(std::function<void(const ros::Time&)> update_callback):
+    update_callback_(update_callback)
   {
+    subscribeCheck();
   }
 
-  SensorBase(XmlRpc::XmlRpcValue const &sensor_param, std::string topic_category, std::function<void(const ros::Time&)> update_callback)
+  SensorBase(XmlRpc::XmlRpcValue const &sensor_param, std::function<void(const ros::Time&)> update_callback):
+    update_callback_(update_callback)
   {
-    std::string topic, name;
-    topic = std::string(sensor_param["topics"][topic_category]);
-    name = std::string(sensor_param["name"]);
-    initialize(topic, name, topic_category, update_callback);
+    topic_ = std::string(sensor_param["topics"][sensor_type]);
+    name_ = std::string(sensor_param["name"]);
+    subscribeCheck();
   }
 
-  virtual void initialize(const std::string &topic, std::string name, std::string topic_category, std::function<void(const ros::Time&)> update_callback)
+  void subscribeCheckCallback(const ros::TimerEvent& event)
   {
-    name_ = name;
-    topic_ = topic;
-    category_ = topic_category;
-    update_callback_ = update_callback;
+      subscribeCheck();
+  }
+
+  void subscribeCheck()
+  {
+    ros::NodeHandle nh;
+    auto topic_type = getROSType(nh.resolveName(topic_));
+
+    if (!static_cast<T*>(this)->subscribe(topic_, topic_type))
+    {
+      ROS_WARN_STREAM("Unkown or unsupported " << T::sensor_type << " topic type for: " << topic_ << ", type: " << topic_type);
+      subscribe_check_timer_ = nh.createTimer(ros::Duration(1.0), std::bind(&SensorBase<T>::subscribeCheckCallback, this, std::placeholders::_1) , true);
+    }
   }
 
   ros::Subscriber subscriber_;
-  T latest_value_;
-  std::string name_;
-  std::string topic_;
-  std::string category_;
+  std::string name_ = "default";
+  std::string topic_ = T::sensor_type;
   std::function<void(const ros::Time&)> update_callback_;
+  ros::Timer subscribe_check_timer_;
 };
 
 } // namespace mru_transform
