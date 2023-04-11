@@ -29,6 +29,7 @@ bool OrientationSensor::subscribe(const std::string &topic, const std::string& t
     subscriber_ = nh.subscribe(topic, 5, &OrientationSensor::quaternionCallback, this);
     return true;
   }
+  ROS_WARN_STREAM_THROTTLE(30.0, "Supported position types: sensor_msgs/Imu, geometry_msgs/QuaternionStamped");
   return false;
 }
 

@@ -28,6 +28,7 @@ bool VelocitySensor::subscribe(const std::string &topic, const std::string &topi
     subscriber_ = nh.subscribe(topic_, 5, &VelocitySensor::twistCallback, this);
     return true;
   }
+  ROS_WARN_STREAM_THROTTLE(30.0, "Supported velocity types: geometry_msgs/TwistStamped, geometry_msgs/TwistWithCovarianceStamped");
   return false;
 }
 

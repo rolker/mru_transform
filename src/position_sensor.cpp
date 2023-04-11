@@ -23,6 +23,7 @@ bool PositionSensor::subscribe(const std::string &topic, const std::string &topi
     subscriber_ = nh.subscribe(topic, 5, &PositionSensor::navSatFixCallback, this);
     return true;
   }
+  ROS_WARN_STREAM_THROTTLE(30.0, "Supported position types: sensor_msgs/NavSatFix");
   return false;
 }
 

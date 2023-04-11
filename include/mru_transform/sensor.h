@@ -50,11 +50,14 @@ protected:
     ros::NodeHandle nh;
     auto topic_type = getROSType(nh.resolveName(topic_));
 
-    if (!static_cast<T*>(this)->subscribe(topic_, topic_type))
-    {
-      ROS_WARN_STREAM("Unkown or unsupported " << T::sensor_type << " topic type for: " << topic_ << ", type: " << topic_type);
-      subscribe_check_timer_ = nh.createTimer(ros::Duration(1.0), std::bind(&SensorBase<T>::subscribeCheckCallback, this, std::placeholders::_1) , true);
-    }
+    if(topic_type.empty())
+      ROS_WARN_STREAM_THROTTLE(30.0,"Unkown " << T::sensor_type << " topic type for: " << topic_);
+    else if (!static_cast<T*>(this)->subscribe(topic_, topic_type))
+      ROS_WARN_STREAM_THROTTLE(30.0,"Unsupported " << T::sensor_type << " topic type for: " << topic_ << ", type: " << topic_type);
+    else
+      return; // subscribed, so bail out before setting a new timer
+
+    subscribe_check_timer_ = nh.createTimer(ros::Duration(1.0), std::bind(&SensorBase<T>::subscribeCheckCallback, this, std::placeholders::_1) , true);
   }
 
   ros::Subscriber subscriber_;
