@@ -51,7 +51,7 @@ protected:
     auto topic_type = getROSType(nh.resolveName(topic_));
 
     if(topic_type.empty())
-      ROS_WARN_STREAM_THROTTLE(30.0,"Unkown " << T::sensor_type << " topic type for: " << topic_);
+      ROS_WARN_STREAM_THROTTLE(30.0,"Unknown " << T::sensor_type << " topic type for: " << topic_);
     else if (!static_cast<T*>(this)->subscribe(topic_, topic_type))
       ROS_WARN_STREAM_THROTTLE(30.0,"Unsupported " << T::sensor_type << " topic type for: " << topic_ << ", type: " << topic_type);
     else
