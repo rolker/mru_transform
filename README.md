@@ -28,7 +28,7 @@ Additional frames are published which may be useful in special cases, such as a 
 
 A list of sensors which will be used in order. Each sensor entry has a name and a map of topics.
 
-    project11_transformations/sensors:
+    mru_transform/sensors:
     - name: posmv
       topics: { position: 'sensors/posmv/position', orientation: 'sensors/posmv/orientation', velocity: 'sensors/posmv/velocity'}
     - name: gps
