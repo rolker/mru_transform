@@ -29,7 +29,12 @@ bool OrientationSensor::subscribe(const std::string &topic, const std::string& t
     subscriber_ = nh.subscribe(topic, 5, &OrientationSensor::quaternionCallback, this);
     return true;
   }
-  ROS_WARN_STREAM_THROTTLE(30.0, "Supported position types: sensor_msgs/Imu, geometry_msgs/QuaternionStamped");
+  if (topic_type == "geographic_msgs/GeoPoseStamped")
+  {
+    subscriber_ = nh.subscribe(topic, 5, &OrientationSensor::geoPoseCallback, this);
+    return true;
+  }
+  ROS_WARN_STREAM_THROTTLE(30.0, "Supported position types: sensor_msgs/Imu, geometry_msgs/QuaternionStamped, geographic_msgs/GeoPoseStamped");
   return false;
 }
 
@@ -45,5 +50,13 @@ void OrientationSensor::quaternionCallback(const geometry_msgs::QuaternionStampe
   latest_value_.orientation = msg->quaternion;
   update_callback_(msg->header.stamp);
 }
+
+void OrientationSensor::geoPoseCallback(const geographic_msgs::GeoPoseStamped::ConstPtr& msg)
+{
+  latest_value_.header = msg->header;
+  latest_value_.orientation = msg->pose.orientation;
+  update_callback_(msg->header.stamp);
+}
+
 
 } // namespace mru_transform

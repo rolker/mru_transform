@@ -72,7 +72,11 @@ void MRUTransform::updatePosition(const ros::Time &now)
       p[2] = 0.0;
 
     if(!mapFrame_)
-      mapFrame_ = std::shared_ptr<MapFrame>(new MapFrame(p, map_frame_, odom_frame_));
+    {
+      auto map_origin = p;
+      map_origin.altitude() = 0.0;
+      mapFrame_ = std::shared_ptr<MapFrame>(new MapFrame(map_origin, map_frame_, odom_frame_));
+    }
     auto transforms = mapFrame_->getTransforms(latest_position_.header.stamp);
     p11::Point position_map = mapFrame_->toLocal(p);
 

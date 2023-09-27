@@ -4,6 +4,7 @@
 #include "sensor.h"
 #include <sensor_msgs/NavSatFix.h>
 #include <geographic_msgs/GeoPointStamped.h>
+#include <geographic_msgs/GeoPoseStamped.h>
 
 namespace mru_transform
 {
@@ -23,6 +24,8 @@ private:
   bool subscribe(const std::string &topic, const std::string &topic_type);
 
   void navSatFixCallback(const sensor_msgs::NavSatFix::ConstPtr& msg);
+
+  void geoPoseCallback(const geographic_msgs::GeoPoseStamped::ConstPtr& msg);
 };
 
 } // namespace mru_transform

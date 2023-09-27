@@ -23,7 +23,12 @@ bool PositionSensor::subscribe(const std::string &topic, const std::string &topi
     subscriber_ = nh.subscribe(topic, 5, &PositionSensor::navSatFixCallback, this);
     return true;
   }
-  ROS_WARN_STREAM_THROTTLE(30.0, "Supported position types: sensor_msgs/NavSatFix");
+  if(topic_type == "geographic_msgs/GeoPoseStamped")
+  {
+    subscriber_ = nh.subscribe(topic, 5, &PositionSensor::geoPoseCallback, this);
+    return true;
+  }
+  ROS_WARN_STREAM_THROTTLE(30.0, "Supported position types: sensor_msgs/NavSatFix, geographic_msgs/GeoPoseStamped");
   return false;
 }
 
@@ -38,5 +43,13 @@ void PositionSensor::navSatFixCallback(const sensor_msgs::NavSatFix::ConstPtr& m
     update_callback_(msg->header.stamp);
   }
 }
+
+void PositionSensor::geoPoseCallback(const geographic_msgs::GeoPoseStamped::ConstPtr& msg)
+{
+  latest_value_.header = msg->header;
+  latest_value_.position = msg->pose.position;
+  update_callback_(msg->header.stamp);
+}
+
 
 } // namespace mru_transform

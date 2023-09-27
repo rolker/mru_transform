@@ -4,6 +4,7 @@
 #include "sensor.h"
 #include <sensor_msgs/Imu.h>
 #include <geometry_msgs/QuaternionStamped.h>
+#include <geographic_msgs/GeoPoseStamped.h>
 
 namespace mru_transform
 {
@@ -24,6 +25,7 @@ private:
 
   void imuCallback(const sensor_msgs::Imu::ConstPtr& msg);
   void quaternionCallback(const geometry_msgs::QuaternionStamped::ConstPtr& msg);
+  void geoPoseCallback(const geographic_msgs::GeoPoseStamped::ConstPtr& msg);
 
 };
 
