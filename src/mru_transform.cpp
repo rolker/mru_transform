@@ -119,6 +119,9 @@ void MRUTransform::updateOrientation(const ros::Time &now)
     north_up_base_link_to_base_link.header.frame_id = base_frame_+"_north_up";
     north_up_base_link_to_base_link.child_frame_id = base_frame_;
     north_up_base_link_to_base_link.transform.rotation = latest_orientation_.orientation;
+    // if we have an uninitialized quat, lets set it to identity
+    if(latest_orientation_.orientation.x == 0.0 && latest_orientation_.orientation.y == 0.0 && latest_orientation_.orientation.z == 0 && latest_orientation_.orientation.w == 0.0)
+      north_up_base_link_to_base_link.transform.rotation.w = 1.0;
     transforms.push_back(north_up_base_link_to_base_link);
     broadcaster_->sendTransform(transforms);
 
