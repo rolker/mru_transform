@@ -1,4 +1,6 @@
 #include "mru_transform/velocity_sensor.h"
+#include <functional>
+using std::placeholders::_1;
 
 namespace mru_transform
 {
@@ -6,40 +8,50 @@ namespace mru_transform
 template <>
 const std::string SensorBase<VelocitySensor>::sensor_type("velocity");
 
-VelocitySensor::VelocitySensor(std::function<void(const ros::Time&)> update_callback):BaseType(update_callback)
+VelocitySensor::VelocitySensor(std::function<void(const rclcpp::Time&)> update_callback):BaseType(update_callback)
 {
 }
 
-VelocitySensor::VelocitySensor(XmlRpc::XmlRpcValue const &sensor_param, std::function<void(const ros::Time&)> update_callback):BaseType(sensor_param, update_callback)
+VelocitySensor::VelocitySensor(rclcpp::Node::SharedPtr node, std::string name, std::function<void(const rclcpp::Time&)> update_callback)
+    :BaseType(node, name, update_callback)
 {
 }
 
 bool VelocitySensor::subscribe(const std::string &topic, const std::string &topic_type)
 {
-  ros::NodeHandle nh;
+  //ros::NodeHandle nh;
 
-  if (topic_type == "geometry_msgs/TwistWithCovarianceStamped")
+  if (topic_type == "geometry_msgs/msg/TwistWithCovarianceStamped")
   {
-    subscriber_ = nh.subscribe(topic_, 5, &VelocitySensor::twistWithCovarianceCallback, this);
+    //subscriber_ = nh.subscribe(topic_, 5, &VelocitySensor::twistWithCovarianceCallback, this);
+    subs_.twist_with_covariance_stamped = node_ptr_->create_subscription<geometry_msgs::msg::TwistWithCovarianceStamped>(
+        topic_, 5, std::bind(&VelocitySensor::twistWithCovarianceCallback, this, _1));
     return true;
   }
-  if(topic_type == "geometry_msgs/TwistStamped")
+  if(topic_type == "geometry_msgs/msg/TwistStamped")
   {
-    subscriber_ = nh.subscribe(topic_, 5, &VelocitySensor::twistCallback, this);
+    //subscriber_ = nh.subscribe(topic_, 5, &VelocitySensor::twistCallback, this);
+    subs_.twist_stamped = node_ptr_->create_subscription<geometry_msgs::msg::TwistStamped>(
+        topic_, 5, std::bind(&VelocitySensor::twistCallback, this, _1));
     return true;
   }
-  ROS_WARN_STREAM_THROTTLE(30.0, "Supported velocity types: geometry_msgs/TwistStamped, geometry_msgs/TwistWithCovarianceStamped");
+  RCLCPP_WARN_THROTTLE(
+      node_ptr_->get_logger(),
+      *node_ptr_->get_clock(),
+      30 * 1000,  // Throttle interval in milliseconds
+      "Supported velocity types: geometry_msgs/TwistStamped, geometry_msgs/TwistWithCovarianceStamped"
+      );
   return false;
 }
 
-void VelocitySensor::twistWithCovarianceCallback(const geometry_msgs::TwistWithCovarianceStamped::ConstPtr& msg)
+void VelocitySensor::twistWithCovarianceCallback(const geometry_msgs::msg::TwistWithCovarianceStamped::ConstPtr& msg)
 {
   latest_value_.header = msg->header;
   latest_value_.twist = msg->twist.twist;
   update_callback_(msg->header.stamp);
 }
 
-void VelocitySensor::twistCallback(const geometry_msgs::TwistStamped::ConstPtr& msg)
+void VelocitySensor::twistCallback(const geometry_msgs::msg::TwistStamped::ConstPtr& msg)
 {
   latest_value_ = *msg;
   update_callback_(msg->header.stamp);

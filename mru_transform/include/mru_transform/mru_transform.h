@@ -1,13 +1,16 @@
 #ifndef MRU_TRANSFORM_MRU_TRANSFORM_H
 #define MRU_TRANSFORM_MRU_TRANSFORM_H
 
+#include "nav_msgs/msg/odometry.hpp"
+#include "std_msgs/msg/string.hpp"
 #include <mru_transform/orientation_sensor.h>
 #include <mru_transform/position_sensor.h>
 #include <mru_transform/velocity_sensor.h>
 #include <mru_transform/map_frame.h>
 #include <tf2_ros/transform_broadcaster.h>
-#include <std_msgs/String.h>
-#include <nav_msgs/Odometry.h>
+//#include <std_msgs/String.h>
+//#include <nav_msgs/Odometry.h>
+//#include <rclcpp/rclcpp.hpp>
 
 namespace mru_transform
 {
@@ -15,25 +18,27 @@ namespace mru_transform
 class MRUTransform
 {
 public:
-  MRUTransform(ros::NodeHandle& nh, ros::NodeHandle& nh_private);
+  MRUTransform(rclcpp::Node::SharedPtr node_ptr);
   void update();
-  void updatePosition(const ros::Time &timestamp);
-  void updateOrientation(const ros::Time &timestamp);
-  void updateVelocity(const ros::Time &timestamp);
+  void updatePosition(const rclcpp::Time &timestamp);
+  void updateOrientation(const rclcpp::Time &timestamp);
+  void updateVelocity(const rclcpp::Time &timestamp);
 
 private:
-  template<typename T, typename VST> bool updateLatest(T &value,  const VST& sensors, const ros::Time& now)
+  template<typename T, typename VST> bool updateLatest(T &value,  const VST& sensors, const rclcpp::Time& now)
   {
-    for(auto s: sensors)
-      if(now - s->lastValue().header.stamp < sensor_timeout_ &&
-s->lastValue().header.stamp > value.header.stamp)
+    for(auto s: sensors){
+      rclcpp::Time last_value_time = rclcpp::Time(s->lastValue().header.stamp.sec, s->lastValue().header.stamp.nanosec);
+      rclcpp::Time value_time = rclcpp::Time(value.header.stamp.sec, value.header.stamp.nanosec);
+      if(now - last_value_time < sensor_timeout_ && last_value_time > value_time)
         {
           value = s->lastValue();
-          std_msgs::String active;
+          std_msgs::msg::String active;
           active.data = s->name();
-          active_sensor_pubs_[s->sensor_type].publish(active);
+          active_sensor_pubs_[s->sensor_type]->publish(active);
           return true;
         }
+    }
     return false;
   }
 
@@ -46,19 +51,22 @@ s->lastValue().header.stamp > value.header.stamp)
   OrientationSensor::ValueType latest_orientation_;
   VelocitySensor::ValueType latest_velocity_;
 
-  std::map<std::string, ros::Publisher> active_sensor_pubs_;
+  std::map<std::string, rclcpp::Publisher<std_msgs::msg::String>::SharedPtr > active_sensor_pubs_;
 
-  ros::Duration sensor_timeout_ = ros::Duration(1.0);
+  rclcpp::Duration sensor_timeout_ = rclcpp::Duration(1.0s);
 
   std::string base_frame_ = "base_link";
   std::string map_frame_ = "map";
   std::string odom_frame_ = "odom";
   std::string odom_topic_ = "odom";
+  std::vector<std::string> sensor_names_ = {"example_sensor"};
 
   std::shared_ptr<MapFrame> mapFrame_;
   std::shared_ptr<tf2_ros::TransformBroadcaster> broadcaster_;
-  ros::Publisher odom_pub_;
-  nav_msgs::Odometry odom_;
+  rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_pub_;
+  nav_msgs::msg::Odometry odom_;
+
+  rclcpp::Node::SharedPtr node_ptr_;
 };
 
 } // namespace mru_transform

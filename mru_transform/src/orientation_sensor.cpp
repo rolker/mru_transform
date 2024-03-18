@@ -1,57 +1,68 @@
 #include "mru_transform/orientation_sensor.h"
-
+using std::placeholders::_1;
 namespace mru_transform
 {
 
 template <>
 const std::string SensorBase<OrientationSensor>::sensor_type("orientation");
 
-OrientationSensor::OrientationSensor(std::function<void(const ros::Time&)> update_callback)
+OrientationSensor::OrientationSensor(std::function<void(const rclcpp::Time&)> update_callback)
   :BaseType(update_callback)
 {
 }
 
-OrientationSensor::OrientationSensor(XmlRpc::XmlRpcValue const &sensor_param, std::function<void(const ros::Time&)> update_callback)
-  :BaseType(sensor_param,  update_callback)
+OrientationSensor::OrientationSensor(rclcpp::Node::SharedPtr node, std::string name, std::function<void(const rclcpp::Time&)> update_callback)
+  :BaseType(node, name,  update_callback)
 {
 }
 
 bool OrientationSensor::subscribe(const std::string &topic, const std::string& topic_type)
 {
-  ros::NodeHandle nh;
-  if (topic_type == "sensor_msgs/Imu")
+  //ros::NodeHandle nh;
+  if (topic_type == "sensor_msgs/msg/Imu")
   {
-    subscriber_ = nh.subscribe(topic, 5, &OrientationSensor::imuCallback, this);
+    //subscriber_ = nh.subscribe(topic, 5, &OrientationSensor::imuCallback, this);
+    subs_.imu = node_ptr_->create_subscription<sensor_msgs::msg::Imu>(
+        topic_, 5, std::bind(&OrientationSensor::imuCallback, this, _1));
     return true;
   }
-  if (topic_type == "geometry_msgs/QuaternionStamped")
+  if (topic_type == "geometry_msgs/msg/QuaternionStamped")
   {
-    subscriber_ = nh.subscribe(topic, 5, &OrientationSensor::quaternionCallback, this);
+    //subscriber_ = nh.subscribe(topic, 5, &OrientationSensor::quaternionCallback, this);
+    subs_.quaternion_stamped = node_ptr_->create_subscription<geometry_msgs::msg::QuaternionStamped>(
+        topic_, 5, std::bind(&OrientationSensor::quaternionCallback, this, _1));
     return true;
   }
-  if (topic_type == "geographic_msgs/GeoPoseStamped")
+  if (topic_type == "geographic_msgs/msg/GeoPoseStamped")
   {
-    subscriber_ = nh.subscribe(topic, 5, &OrientationSensor::geoPoseCallback, this);
+    //subscriber_ = nh.subscribe(topic, 5, &OrientationSensor::geoPoseCallback, this);
+    subs_.geopose_stamped = node_ptr_->create_subscription<geographic_msgs::msg::GeoPoseStamped>(
+        topic_, 5, std::bind(&OrientationSensor::geoPoseCallback, this, _1));
     return true;
   }
-  ROS_WARN_STREAM_THROTTLE(30.0, "Supported position types: sensor_msgs/Imu, geometry_msgs/QuaternionStamped, geographic_msgs/GeoPoseStamped");
+  RCLCPP_WARN_THROTTLE(
+      node_ptr_->get_logger(),
+      *node_ptr_->get_clock(),
+      30 * 1000,  // Throttle interval in milliseconds
+      "Supported position types: sensor_msgs/Imu, geometry_msgs/QuaternionStamped, geographic_msgs/GeoPoseStamped"
+      );
   return false;
 }
 
-void OrientationSensor::imuCallback(const sensor_msgs::Imu::ConstPtr& msg)
+void OrientationSensor::imuCallback(const sensor_msgs::msg::Imu::ConstPtr& msg)
 {
   latest_value_ = *msg;
   update_callback_(msg->header.stamp);
 }
 
-void OrientationSensor::quaternionCallback(const geometry_msgs::QuaternionStamped::ConstPtr& msg)
+void OrientationSensor::quaternionCallback(const geometry_msgs::msg::QuaternionStamped::ConstPtr& msg)
 {
   latest_value_.header = msg->header;
   latest_value_.orientation = msg->quaternion;
   update_callback_(msg->header.stamp);
 }
 
-void OrientationSensor::geoPoseCallback(const geographic_msgs::GeoPoseStamped::ConstPtr& msg)
+void OrientationSensor::geoPoseCallback(const geographic_msgs::msg::GeoPoseStamped::ConstPtr& msg)
 {
   latest_value_.header = msg->header;
   latest_value_.orientation = msg->pose.orientation;
