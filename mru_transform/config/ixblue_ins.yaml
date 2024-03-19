@@ -1,0 +1,31 @@
+# /**:
+#   ros__parameters:
+#     base_frame: "base_link"
+#     map_frame:  "map"
+#     odom_frame: "odom"
+#     odom_topic: "odom"
+#     sensors_names:
+#     - "ixblue_ins"
+#     sensors:
+#       ixblue_ins:
+#         topics:
+#           orientation: "/ixblue_ins_driver/standard/imu"
+#           position: "/ixblue_ins_driver/standard/navsatfix"
+#           velocity: ""
+
+/mru_transform:
+  ros__parameters:
+    base_frame: base_link
+    map_frame: map
+    odom_frame: odom
+    odom_topic: odom
+    sensor_timeout: 2.0
+    sensors:
+      ixblue_ins:
+        topics:
+          orientation: /ixblue_ins_driver/standard/imu
+          position: /ixblue_ins_driver/standard/navsatfix
+          velocity: default_topic
+    sensors_names:
+    - ixblue_ins
+    use_sim_time: false

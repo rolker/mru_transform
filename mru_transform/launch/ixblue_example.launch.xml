@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<launch>
+  <node pkg="mru_transform" exec="mru_transform_node" name="mru_transform">
+    <param from="$(find-pkg-share mru_transform)/config/ixblue_ins.yaml"/>
+  </node>
+</launch>

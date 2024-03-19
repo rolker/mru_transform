@@ -28,16 +28,41 @@ private:
   template<typename T, typename VST> bool updateLatest(T &value,  const VST& sensors, const rclcpp::Time& now)
   {
     for(auto s: sensors){
-      rclcpp::Time last_value_time = rclcpp::Time(s->lastValue().header.stamp.sec, s->lastValue().header.stamp.nanosec);
-      rclcpp::Time value_time = rclcpp::Time(value.header.stamp.sec, value.header.stamp.nanosec);
-      if(now - last_value_time < sensor_timeout_ && last_value_time > value_time)
-        {
+      rclcpp::Time sensor_time = s->lastValue().header.stamp;
+      rclcpp::Time value_time = value.header.stamp;
+      auto msg_age = now - value_time;
+
+
+      if(now - s->lastValue().header.stamp < sensor_timeout_){
+        if(sensor_time > value_time){
           value = s->lastValue();
           std_msgs::msg::String active;
           active.data = s->name();
           active_sensor_pubs_[s->sensor_type]->publish(active);
+          // RCLCPP_WARN(node_ptr_->get_logger(),
+          //             "%s time ok:  ",
+          //             s->name().c_str());
           return true;
         }
+        else{
+          double age = (msg_age.nanoseconds() / 1.0e9) - (msg_age.nanoseconds() / 1.0e9);
+          RCLCPP_WARN(node_ptr_->get_logger(),
+                      "time from sensor %s received out of order",
+                      s->name().c_str() );
+        }
+      }else{
+        double age = msg_age.nanoseconds() / 1.0e9;
+        RCLCPP_WARN(node_ptr_->get_logger(), "time from sensor %s timeout, age: %fs", s->name().c_str(),age);
+      }
+
+      // if(msg_age < sensor_timeout_ && last_value_time > value_time)
+      //   {
+      //     value = s->lastValue();
+      //     std_msgs::msg::String active;
+      //     active.data = s->name();
+      //     active_sensor_pubs_[s->sensor_type]->publish(active);
+      //     return true;
+      //   }
     }
     return false;
   }

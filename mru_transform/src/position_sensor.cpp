@@ -22,8 +22,10 @@ bool PositionSensor::subscribe(const std::string &topic, const std::string &topi
   if(topic_type == "sensor_msgs/msg/NavSatFix")
   {
     //subscriber_ = nh.subscribe(topic, 5, &PositionSensor::navSatFixCallback, this);
+    RCLCPP_INFO(node_ptr_->get_logger(), "subscribing");
     subs_.navsat_fix = node_ptr_->create_subscription<sensor_msgs::msg::NavSatFix>(
         topic_, 5, std::bind(&PositionSensor::navSatFixCallback, this, _1));
+
     return true;
   }
   if(topic_type == "geographic_msgs/msg/GeoPoseStamped")
@@ -34,15 +36,15 @@ bool PositionSensor::subscribe(const std::string &topic, const std::string &topi
     return true;
   }
   RCLCPP_WARN_THROTTLE(
-      node_ptr_->get_logger(),
-      *node_ptr_->get_clock(),
-      30 * 1000,  // Throttle interval in milliseconds
-      "Supported position types: sensor_msgs/NavSatFix, geographic_msgs/GeoPoseStamped"
-      );
+    node_ptr_->get_logger(),
+    *node_ptr_->get_clock(),
+    30 * 1000,  // Throttle interval in milliseconds
+    "Supported position types: sensor_msgs/NavSatFix, geographic_msgs/GeoPoseStamped"
+    );
   return false;
 }
 
-void PositionSensor::navSatFixCallback(const sensor_msgs::msg::NavSatFix::ConstPtr& msg)
+void PositionSensor::navSatFixCallback(const sensor_msgs::msg::NavSatFix::SharedPtr msg)
 {
   if(msg->status.status >= 0)
   {

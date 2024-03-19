@@ -23,14 +23,14 @@ private:
   friend class SensorBase<PositionSensor>;
   ValueType latest_value_;
 
-  struct{
-    rclcpp::Subscription<sensor_msgs::msg::NavSatFix>::SharedPtr navsat_fix;
-    rclcpp::Subscription<geographic_msgs::msg::GeoPoseStamped>::SharedPtr geo_pose_stamped;
-  }subs_;
+  // struct{
+  //   rclcpp::Subscription<sensor_msgs::msg::NavSatFix>::SharedPtr navsat_fix;
+  //   rclcpp::Subscription<geographic_msgs::msg::GeoPoseStamped>::SharedPtr geo_pose_stamped;
+  // }subs_;
 
   bool subscribe(const std::string &topic, const std::string &topic_type);
 
-  void navSatFixCallback(const sensor_msgs::msg::NavSatFix::ConstPtr& msg);
+  void navSatFixCallback(const sensor_msgs::msg::NavSatFix::SharedPtr msg);
 
   void geoPoseCallback(const geographic_msgs::msg::GeoPoseStamped::ConstPtr& msg);
 };

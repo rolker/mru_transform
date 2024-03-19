@@ -3,6 +3,14 @@
 
 #include <rclcpp/rclcpp.hpp>
 
+#include <sensor_msgs/msg/nav_sat_fix.hpp>
+#include <geographic_msgs/msg/geo_point_stamped.hpp>
+#include <sensor_msgs/msg/imu.hpp>
+#include <geometry_msgs/msg/quaternion_stamped.hpp>
+#include <geographic_msgs/msg/geo_pose_stamped.hpp>
+#include <geometry_msgs/msg/twist_stamped.hpp>
+#include <geometry_msgs/msg/twist_with_covariance_stamped.hpp>
+
 using namespace std::chrono_literals;
 
 namespace mru_transform
@@ -25,9 +33,9 @@ public:
   {
     return static_cast<const T*>(this)->latest_value_;
   }
-
-protected:
   using BaseType = SensorBase<T>;
+protected:
+
   SensorBase(std::function<void(const rclcpp::Time&)> update_callback):
     update_callback_(update_callback)
   {
@@ -35,13 +43,14 @@ protected:
   }
 
   SensorBase(rclcpp::Node::SharedPtr node, std::string name, std::function<void(const rclcpp::Time&)> update_callback):
-    update_callback_(update_callback)
+    update_callback_(update_callback),
+    node_ptr_(node)
   {
-    node_ptr_ = node;
+    //node_ptr_ = node;
     //topic_ = std::string(sensor_param["topics"][sensor_type]);
     //name_ = std::string(sensor_param["name"]);
-    node->declare_parameter<std::string>("sensors."+name+".topics." + sensor_type, "default_topic");
-    node->get_parameter("sensors."+name+".topics." + sensor_type, topic_);
+    node_ptr_->declare_parameter<std::string>("sensors."+name+".topics." + sensor_type, "default_topic");
+    node_ptr_->get_parameter("sensors."+name+".topics." + sensor_type, topic_);
     name_ = name;
     subscribeCheck();
   }
@@ -88,6 +97,17 @@ protected:
   }
   rclcpp::Node::SharedPtr node_ptr_;
   //rclcpp::GenericSubscription::SharedPtr subscriber_;
+  struct{
+    rclcpp::Subscription<sensor_msgs::msg::NavSatFix>::SharedPtr navsat_fix;
+    rclcpp::Subscription<geographic_msgs::msg::GeoPoseStamped>::SharedPtr geo_pose_stamped;
+    rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr imu;
+    rclcpp::Subscription<geometry_msgs::msg::QuaternionStamped>::SharedPtr quaternion_stamped;
+    rclcpp::Subscription<geographic_msgs::msg::GeoPoseStamped>::SharedPtr geopose_stamped;
+    rclcpp::Subscription<geometry_msgs::msg::TwistWithCovarianceStamped>::SharedPtr twist_with_covariance_stamped;
+    rclcpp::Subscription<geometry_msgs::msg::TwistStamped>::SharedPtr twist_stamped;
+  }subs_;
+
+
   std::string name_ = "default";
   std::string topic_ = T::sensor_type;
   std::function<void(const rclcpp::Time&)> update_callback_;

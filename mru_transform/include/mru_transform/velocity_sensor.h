@@ -20,10 +20,10 @@ public:
 
 private:
   ValueType latest_value_;
-  struct{
-    rclcpp::Subscription<geometry_msgs::msg::TwistWithCovarianceStamped>::SharedPtr twist_with_covariance_stamped;
-    rclcpp::Subscription<geometry_msgs::msg::TwistStamped>::SharedPtr twist_stamped;
-  }subs_;
+  // struct{
+  //   rclcpp::Subscription<geometry_msgs::msg::TwistWithCovarianceStamped>::SharedPtr twist_with_covariance_stamped;
+  //   rclcpp::Subscription<geometry_msgs::msg::TwistStamped>::SharedPtr twist_stamped;
+  // }subs_;
   bool subscribe(const std::string &topic, const std::string &topic_type);
   friend class SensorBase<VelocitySensor>;
 

@@ -22,8 +22,10 @@ bool OrientationSensor::subscribe(const std::string &topic, const std::string& t
   if (topic_type == "sensor_msgs/msg/Imu")
   {
     //subscriber_ = nh.subscribe(topic, 5, &OrientationSensor::imuCallback, this);
+    auto callback = std::bind(&OrientationSensor::imuCallback, this, _1);
+    //RCLCPP_INFO(node_ptr_->get_logger(), "subscribing");
     subs_.imu = node_ptr_->create_subscription<sensor_msgs::msg::Imu>(
-        topic_, 5, std::bind(&OrientationSensor::imuCallback, this, _1));
+        topic_, 5, callback);
     return true;
   }
   if (topic_type == "geometry_msgs/msg/QuaternionStamped")
@@ -49,7 +51,7 @@ bool OrientationSensor::subscribe(const std::string &topic, const std::string& t
   return false;
 }
 
-void OrientationSensor::imuCallback(const sensor_msgs::msg::Imu::ConstPtr& msg)
+void OrientationSensor::imuCallback(const sensor_msgs::msg::Imu::SharedPtr msg)
 {
   latest_value_ = *msg;
   update_callback_(msg->header.stamp);

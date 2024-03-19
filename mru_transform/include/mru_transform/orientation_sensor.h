@@ -20,19 +20,17 @@ public:
 
 private:
   ValueType latest_value_;
-  struct{
-    rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr imu;
-    rclcpp::Subscription<geometry_msgs::msg::QuaternionStamped>::SharedPtr quaternion_stamped;
-    rclcpp::Subscription<geographic_msgs::msg::GeoPoseStamped>::SharedPtr geopose_stamped;
-  }subs_;
-
   friend class SensorBase<OrientationSensor>;
   bool subscribe(const std::string &topic, const std::string &topic_type);
 
-  void imuCallback(const sensor_msgs::msg::Imu::ConstPtr& msg);
+  void imuCallback(const sensor_msgs::msg::Imu::SharedPtr msg);
   void quaternionCallback(const geometry_msgs::msg::QuaternionStamped::ConstPtr& msg);
   void geoPoseCallback(const geographic_msgs::msg::GeoPoseStamped::ConstPtr& msg);
-
+  // struct{
+  //   rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr imu;
+  //   rclcpp::Subscription<geometry_msgs::msg::QuaternionStamped>::SharedPtr quaternion_stamped;
+  //   rclcpp::Subscription<geographic_msgs::msg::GeoPoseStamped>::SharedPtr geopose_stamped;
+  // }subs_;
 };
 
 

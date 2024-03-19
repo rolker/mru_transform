@@ -39,7 +39,7 @@ MRUTransform::MRUTransform(rclcpp::Node::SharedPtr node_ptr)
   sensor_timeout_ = rclcpp::Duration::from_seconds(st);
 
   //broadcaster_ = std::shared_ptr<tf2_ros::TransformBroadcaster>(new tf2_ros::TransformBroadcaster);
-  std::make_shared<tf2_ros::TransformBroadcaster>(node_ptr);
+  broadcaster_ = std::make_shared<tf2_ros::TransformBroadcaster>(node_ptr);
 
   //odom_pub_ = nh.advertise<nav_msgs::Odometry>(odom_topic_, 50);
 
@@ -63,10 +63,13 @@ MRUTransform::MRUTransform(rclcpp::Node::SharedPtr node_ptr)
   node_ptr->declare_parameter("sensors_names",sensor_names_);
   node_ptr->get_parameter("sensors_names",sensor_names_);
 
+  // std::vector<std::string> query = {""};
+  // auto response = node_ptr->list_parameters(query,1);
+
   for(auto sensor_name : sensor_names_){
-    position_sensors_.push_back(std::make_shared<PositionSensor>(node_ptr, sensor_name, [this](rclcpp::Time stamp)->void{this->updatePosition(stamp);}));
-    orientation_sensors_.push_back(std::make_shared<OrientationSensor>(node_ptr, sensor_name, [this](rclcpp::Time stamp)->void{this->updatePosition(stamp);}));
-    velocity_sensors_.push_back(std::make_shared<VelocitySensor>(node_ptr, sensor_name, [this](rclcpp::Time stamp)->void{this->updatePosition(stamp);}));
+    position_sensors_.push_back(std::make_shared<PositionSensor>(       node_ptr, sensor_name, [this](rclcpp::Time stamp)->void{this->updatePosition(stamp);}));
+    orientation_sensors_.push_back(std::make_shared<OrientationSensor>( node_ptr, sensor_name, [this](rclcpp::Time stamp)->void{this->updateOrientation(stamp);}));
+    velocity_sensors_.push_back(std::make_shared<VelocitySensor>(       node_ptr, sensor_name, [this](rclcpp::Time stamp)->void{this->updateVelocity(stamp);}));
   }
   
   // add a default sensor if none have been found
