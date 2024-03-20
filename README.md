@@ -60,3 +60,8 @@ Override the frame_id's which default to `base_link`, `map` and `odom`.
 
 The topic used to publish odometry messages. Defaults to `odom`.
 
+# Credits
+
+Origionally Developed by: Roland Arsenault,  University of New Hampsire [Center for Coastal and Ocean Mapping](https://github.com/CCOMJHC)
+
+ROS2 migration: Dr. Kristopher Kransosky, [Seaward Science](https://github.com/SeawardScience)
