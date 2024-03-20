@@ -3,10 +3,10 @@
 
 #include "nav_msgs/msg/odometry.hpp"
 #include "std_msgs/msg/string.hpp"
-#include <mru_transform/orientation_sensor.h>
-#include <mru_transform/position_sensor.h>
-#include <mru_transform/velocity_sensor.h>
-#include <mru_transform/map_frame.h>
+#include <mru_transform/orientation_sensor.hpp>
+#include <mru_transform/position_sensor.hpp>
+#include <mru_transform/velocity_sensor.hpp>
+#include <mru_transform/map_frame.hpp>
 #include <tf2_ros/transform_broadcaster.h>
 
 namespace mru_transform

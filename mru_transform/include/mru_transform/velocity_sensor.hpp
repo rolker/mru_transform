@@ -1,7 +1,7 @@
 #ifndef MRU_TRANSFORM_VELOCITY_SENSOR_H
 #define MRU_TRANSFORM_VELOCITY_SENSOR_H
 
-#include "sensor.h"
+#include "sensor.hpp"
 #include <geometry_msgs/msg/twist_with_covariance_stamped.hpp>
 #include <geometry_msgs/msg/twist_stamped.hpp>
 

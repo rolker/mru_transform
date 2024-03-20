@@ -1,7 +1,7 @@
 #ifndef MRU_TRANSFORM_POSITION_SENSOR_H
 #define MRU_TRANSFORM_POSITION_SENSOR_H
 
-#include "sensor.h"
+#include "sensor.hpp"
 #include <sensor_msgs/msg/nav_sat_fix.hpp>
 #include <geographic_msgs/msg/geo_point_stamped.hpp>
 #include <geographic_msgs/msg/geo_pose_stamped.hpp>

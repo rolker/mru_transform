@@ -1,4 +1,4 @@
-#include "mru_transform/sensor.h"
+#include "mru_transform/sensor.hpp"
 
 namespace mru_transform
 {

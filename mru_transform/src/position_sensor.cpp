@@ -1,4 +1,4 @@
-#include "mru_transform/position_sensor.h"
+#include "mru_transform/position_sensor.hpp"
 using std::placeholders::_1;
 namespace mru_transform
 {

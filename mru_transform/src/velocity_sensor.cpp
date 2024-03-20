@@ -1,4 +1,4 @@
-#include "mru_transform/velocity_sensor.h"
+#include "mru_transform/velocity_sensor.hpp"
 #include <functional>
 using std::placeholders::_1;
 

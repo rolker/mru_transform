@@ -1,7 +1,7 @@
 #ifndef MRU_TRANSFORM_ORIENTATION_SENSOR_H
 #define MRU_TRANSFORM_ORIENTATION_SENSOR_H
 
-#include "sensor.h"
+#include "sensor.hpp"
 #include <sensor_msgs/msg/imu.hpp>
 #include <geometry_msgs/msg/quaternion_stamped.hpp>
 #include <geographic_msgs/msg/geo_pose_stamped.hpp>
