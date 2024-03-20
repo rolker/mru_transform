@@ -4,8 +4,6 @@
 #include "sensor.h"
 #include <sensor_msgs/msg/nav_sat_fix.hpp>
 #include <geographic_msgs/msg/geo_point_stamped.hpp>
-//#include <geographic_msgs/GeoPointStamped.h>
-//#include <geographic_msgs/GeoPoseStamped.h>
 #include <geographic_msgs/msg/geo_pose_stamped.hpp>
 
 namespace mru_transform
@@ -22,11 +20,6 @@ public:
 private:
   friend class SensorBase<PositionSensor>;
   ValueType latest_value_;
-
-  // struct{
-  //   rclcpp::Subscription<sensor_msgs::msg::NavSatFix>::SharedPtr navsat_fix;
-  //   rclcpp::Subscription<geographic_msgs::msg::GeoPoseStamped>::SharedPtr geo_pose_stamped;
-  // }subs_;
 
   bool subscribe(const std::string &topic, const std::string &topic_type);
 

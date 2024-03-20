@@ -5,7 +5,6 @@
 #include <sensor_msgs/msg/imu.hpp>
 #include <geometry_msgs/msg/quaternion_stamped.hpp>
 #include <geographic_msgs/msg/geo_pose_stamped.hpp>
-//#include <geographic_msgs/GeoPoseStamped.h>
 
 namespace mru_transform
 {
@@ -22,15 +21,9 @@ private:
   ValueType latest_value_;
   friend class SensorBase<OrientationSensor>;
   bool subscribe(const std::string &topic, const std::string &topic_type);
-
   void imuCallback(const sensor_msgs::msg::Imu::SharedPtr msg);
   void quaternionCallback(const geometry_msgs::msg::QuaternionStamped::ConstPtr& msg);
   void geoPoseCallback(const geographic_msgs::msg::GeoPoseStamped::ConstPtr& msg);
-  // struct{
-  //   rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr imu;
-  //   rclcpp::Subscription<geometry_msgs::msg::QuaternionStamped>::SharedPtr quaternion_stamped;
-  //   rclcpp::Subscription<geographic_msgs::msg::GeoPoseStamped>::SharedPtr geopose_stamped;
-  // }subs_;
 };
 
 

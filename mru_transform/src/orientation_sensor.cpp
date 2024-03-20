@@ -18,26 +18,20 @@ OrientationSensor::OrientationSensor(rclcpp::Node::SharedPtr node, std::string n
 
 bool OrientationSensor::subscribe(const std::string &topic, const std::string& topic_type)
 {
-  //ros::NodeHandle nh;
   if (topic_type == "sensor_msgs/msg/Imu")
   {
-    //subscriber_ = nh.subscribe(topic, 5, &OrientationSensor::imuCallback, this);
-    auto callback = std::bind(&OrientationSensor::imuCallback, this, _1);
-    //RCLCPP_INFO(node_ptr_->get_logger(), "subscribing");
     subs_.imu = node_ptr_->create_subscription<sensor_msgs::msg::Imu>(
-        topic_, 5, callback);
+        topic_, 5, std::bind(&OrientationSensor::imuCallback, this, _1));
     return true;
   }
   if (topic_type == "geometry_msgs/msg/QuaternionStamped")
   {
-    //subscriber_ = nh.subscribe(topic, 5, &OrientationSensor::quaternionCallback, this);
     subs_.quaternion_stamped = node_ptr_->create_subscription<geometry_msgs::msg::QuaternionStamped>(
         topic_, 5, std::bind(&OrientationSensor::quaternionCallback, this, _1));
     return true;
   }
   if (topic_type == "geographic_msgs/msg/GeoPoseStamped")
   {
-    //subscriber_ = nh.subscribe(topic, 5, &OrientationSensor::geoPoseCallback, this);
     subs_.geopose_stamped = node_ptr_->create_subscription<geographic_msgs::msg::GeoPoseStamped>(
         topic_, 5, std::bind(&OrientationSensor::geoPoseCallback, this, _1));
     return true;

@@ -17,10 +17,7 @@ namespace mru_transform{
 MRUTransform::MRUTransform(rclcpp::Node::SharedPtr node_ptr)
 {
   node_ptr_ = node_ptr;
-  // nh_private.getParam("map_frame", map_frame_);
-  // nh_private.getParam("base_frame", base_frame_);
-  // nh_private.getParam("odom_frame", odom_frame_);
-  // nh_private.getParam("odom_topic", odom_topic_);
+
   node_ptr->declare_parameter("map_frame", map_frame_);
   node_ptr->get_parameter("map_frame", map_frame_);
 
@@ -38,33 +35,12 @@ MRUTransform::MRUTransform(rclcpp::Node::SharedPtr node_ptr)
   node_ptr->get_parameter("sensor_timeout", st);
   sensor_timeout_ = rclcpp::Duration::from_seconds(st);
 
-  //broadcaster_ = std::shared_ptr<tf2_ros::TransformBroadcaster>(new tf2_ros::TransformBroadcaster);
   broadcaster_ = std::make_shared<tf2_ros::TransformBroadcaster>(node_ptr);
-
-  //odom_pub_ = nh.advertise<nav_msgs::Odometry>(odom_topic_, 50);
 
   odom_pub_ = node_ptr->create_publisher<nav_msgs::msg::Odometry>(odom_topic_, 50);
 
-  // XmlRpc::XmlRpcValue sensors_param;
-  
-  // if(nh_private.getParam("sensors", sensors_param))
-  // {
-  //   if(sensors_param.getType() == XmlRpc::XmlRpcValue::TypeArray)
-  //   {
-  //     for(int i = 0; i < sensors_param.size(); i++)
-  //     {
-  //       position_sensors_.push_back(std::make_shared<PositionSensor>(sensors_param[i], [this](ros::Time stamp)->void{this->updatePosition(stamp);}));
-  //       orientation_sensors_.push_back(std::make_shared<OrientationSensor>(sensors_param[i], [this](ros::Time stamp)->void{this->updateOrientation(stamp);}));
-  //       velocity_sensors_.push_back(std::make_shared<VelocitySensor>(sensors_param[i], [this](ros::Time stamp)->void{this->updateVelocity(stamp);}));
-  //     }
-  //   }
-  // }
-
   node_ptr->declare_parameter("sensors_names",sensor_names_);
   node_ptr->get_parameter("sensors_names",sensor_names_);
-
-  // std::vector<std::string> query = {""};
-  // auto response = node_ptr->list_parameters(query,1);
 
   for(auto sensor_name : sensor_names_){
     position_sensors_.push_back(std::make_shared<PositionSensor>(       node_ptr, sensor_name, [this](rclcpp::Time stamp)->void{this->updatePosition(stamp);}));
@@ -87,7 +63,6 @@ MRUTransform::MRUTransform(rclcpp::Node::SharedPtr node_ptr)
   }
 
   for(auto s: std::vector<std::string>({"position", "orientation", "velocity"})){
-    //active_sensor_pubs_[s] = nh.advertise<std_msgs::String>("nav/active_sensor/"+s,10);
     active_sensor_pubs_[s] = node_ptr->create_publisher<std_msgs::msg::String>(
         "nav/active_sensor/"+s,10);
   }

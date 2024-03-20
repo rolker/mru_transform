@@ -19,18 +19,14 @@ VelocitySensor::VelocitySensor(rclcpp::Node::SharedPtr node, std::string name, s
 
 bool VelocitySensor::subscribe(const std::string &topic, const std::string &topic_type)
 {
-  //ros::NodeHandle nh;
-
   if (topic_type == "geometry_msgs/msg/TwistWithCovarianceStamped")
   {
-    //subscriber_ = nh.subscribe(topic_, 5, &VelocitySensor::twistWithCovarianceCallback, this);
     subs_.twist_with_covariance_stamped = node_ptr_->create_subscription<geometry_msgs::msg::TwistWithCovarianceStamped>(
         topic_, 5, std::bind(&VelocitySensor::twistWithCovarianceCallback, this, _1));
     return true;
   }
   if(topic_type == "geometry_msgs/msg/TwistStamped")
   {
-    //subscriber_ = nh.subscribe(topic_, 5, &VelocitySensor::twistCallback, this);
     subs_.twist_stamped = node_ptr_->create_subscription<geometry_msgs::msg::TwistStamped>(
         topic_, 5, std::bind(&VelocitySensor::twistCallback, this, _1));
     return true;

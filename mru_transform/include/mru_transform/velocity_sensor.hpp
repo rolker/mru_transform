@@ -3,9 +3,7 @@
 
 #include "sensor.h"
 #include <geometry_msgs/msg/twist_with_covariance_stamped.hpp>
-//#include <geometry_msgs/TwistWithCovarianceStamped.h>
 #include <geometry_msgs/msg/twist_stamped.hpp>
-//#include <geometry_msgs/TwistStamped.h>
 
 namespace mru_transform
 {
@@ -20,10 +18,6 @@ public:
 
 private:
   ValueType latest_value_;
-  // struct{
-  //   rclcpp::Subscription<geometry_msgs::msg::TwistWithCovarianceStamped>::SharedPtr twist_with_covariance_stamped;
-  //   rclcpp::Subscription<geometry_msgs::msg::TwistStamped>::SharedPtr twist_stamped;
-  // }subs_;
   bool subscribe(const std::string &topic, const std::string &topic_type);
   friend class SensorBase<VelocitySensor>;
 

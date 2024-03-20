@@ -30,10 +30,6 @@ MapFrame::MapFrame(rclcpp::Node::SharedPtr node, project11::LatLongDegrees const
   map_to_odom_transform_.child_frame_id = odom_frame;
   map_to_odom_transform_.transform.rotation.w = 1.0; // make null quaternion unit length
   
-  // ros::NodeHandle nh;
-  //wgs84_to_map_service_ = nh.advertiseService("wgs84_to_map", &MapFrame::ll2map, this);
-  //map_to_wgs84_service_ = nh.advertiseService("map_to_wgs84", &MapFrame::map2ll, this);
-
   wgs84_to_map_service_ =
       node->create_service<mru_transform_interfaces::srv::LatLongToMap>(
           "wgs84_to_map",

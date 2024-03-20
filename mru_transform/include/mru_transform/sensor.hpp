@@ -44,15 +44,18 @@ protected:
 
   SensorBase(rclcpp::Node::SharedPtr node, std::string name, std::function<void(const rclcpp::Time&)> update_callback):
     update_callback_(update_callback),
-    node_ptr_(node)
+    node_ptr_(node),
+    name_(name)
   {
     //node_ptr_ = node;
     //topic_ = std::string(sensor_param["topics"][sensor_type]);
     //name_ = std::string(sensor_param["name"]);
-    node_ptr_->declare_parameter<std::string>("sensors."+name+".topics." + sensor_type, "default_topic");
+    node_ptr_->declare_parameter<std::string>("sensors."+name+".topics." + sensor_type, "");
     node_ptr_->get_parameter("sensors."+name+".topics." + sensor_type, topic_);
-    name_ = name;
-    subscribeCheck();
+    // name_ = name;
+    if(topic_!=""){
+      subscribeCheck();
+    }
   }
 
   void subscribeCheckCallback()

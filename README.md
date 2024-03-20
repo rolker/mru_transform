@@ -10,9 +10,9 @@ This node is designed for integrated sensors that combine a GPS with an IMU to p
 
 Each sensor is expected to publish on three topics:
 
-- position: `sensor_msgs/NavSatFix`
-- orientation: `sensor_msgs/Imu`
-- velocity: `geometry_msgs/PoseWithCovarianceStamped`
+- position: `sensor_msgs/msg/NavSatFix`
+- orientation: `sensor_msgs/msg/Imu`
+- velocity: `geometry_msgs/msg/PoseWithCovarianceStamped`
 
 Only the linear component of the velocity message is used. It describes velocity of the sensor in an ENU frame. The frame_id should reflect the sensor's frame.
 
@@ -28,12 +28,27 @@ Additional frames are published which may be useful in special cases, such as a 
 
 A list of sensors which will be used in order. Each sensor entry has a name and a map of topics.
 
-    mru_transform/sensors:
-    - name: posmv
-      topics: { position: 'sensors/posmv/position', orientation: 'sensors/posmv/orientation', velocity: 'sensors/posmv/velocity'}
-    - name: gps
-      topics: { position: 'sensors/gps/position', orientation: 'sensors/heading', velocity:
-    'sensors/gps/velocity'}
+```yaml
+/**:
+  ros__parameters:
+    # you must "forward declare" the sensors so they can declare 
+    # their sub params
+    sensor_names:
+    - posmv
+    - gps
+    # then convigure the actual sensors
+    sensors:
+      posmv:
+        topics:  
+          position: 'sensors/posmv/position'
+          orientation: 'sensors/posmv/orientation'
+          velocity: 'sensors/posmv/velocity'
+      gps:
+        topics: 
+          position: 'sensors/gps/position'
+          orientation: 'sensors/heading' 
+          velocity: 'sensors/gps/velocity'
+```
     
 If no sensors are found, a default sensor will be created with topics `position`, `orientation` and `velocity`.
     
