@@ -23,7 +23,6 @@ rosidl_generate_interfaces(
     DEPENDENCIES
     builtin_interfaces
     geographic_msgs
-    marine_acoustic_msgs
     std_msgs
 )
 
