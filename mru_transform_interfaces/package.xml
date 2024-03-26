@@ -3,7 +3,7 @@
 <package format="3">
   <name>mru_transform_interfaces</name>
   <version>0.0.0</version>
-  <description>interfaces for the mru_trasnform package</description>
+  <description>interfaces for the mru_transform package</description>
 
   <maintainer email="roland@ccom.unh.edu">Roland Arsenault</maintainer>
   <license>BSD</license>

@@ -5,17 +5,17 @@ cmake_minimum_required(VERSION 3.8)
 ################################
 
 set(ROS_DEPENDS
+  geographic_msgs
+  geometry_msgs
+  mru_transform_interfaces
+  nav_msgs
   project11
   rclcpp
-  tf2
-  tf2_ros
-  nav_msgs
   sensor_msgs
-  geometry_msgs
-  geographic_msgs
+  tf2
   tf2_geometry_msgs
-  mru_transform_interfaces
-  )
+  tf2_ros
+)
 
 set(EXTERNAL_DEPENDS
 

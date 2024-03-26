@@ -10,16 +10,13 @@
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
-
+  <depend>mru_transform_interfaces</depend>
+  <depend>nav_msgs</depend>
   <depend>project11</depend>
-  <depend>roscpp</depend>
+  <depend>rclcpp</depend>
+  <depend>sensor_msgs</depend>
   <depend>tf2</depend>
   <depend>tf2_ros</depend>
-  <depend>sensor_msgs</depend>
-  <depend>marine_acoustic_msgs</depend>
-  <depend>nav_msgs</depend>
-  <depend>message_generation</depend>
-  <depend>mru_transform_interfaces</depend>
 
   <!-- The export tag contains other, unspecified, tags -->
   <export>
