@@ -8,7 +8,6 @@ find_package(ament_cmake REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 
 find_package(geographic_msgs REQUIRED)
-find_package(marine_acoustic_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 
 set(MSG_FILES

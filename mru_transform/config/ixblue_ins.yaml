@@ -10,9 +10,9 @@
     sensors:
       ixblue_ins:
         topics:
-          orientation: /ixblue_ins_driver/standard/imu
-          position: /ixblue_ins_driver/standard/navsatfix
-          velocity: ""
+          orientation: "/ixblue_ins_driver/standard/imu"
+          position: "/ixblue_ins_driver/standard/navsatfix"
+          velocity: "/ixblue_ins_driver/standard/twist"
     sensors_names:
     - ixblue_ins
     use_sim_time: false

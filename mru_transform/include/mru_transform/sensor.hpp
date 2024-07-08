@@ -63,15 +63,25 @@ protected:
       subscribeCheck();
   }
 
+  std::string resolve_topic_name(const std::string& topic_name) {
+    std::string namespace_ = node_ptr_->get_namespace();
+    if (!namespace_.empty() && namespace_.front() != '/') {
+      namespace_ = "/" + namespace_;
+    }
+    return namespace_ + "/" + topic_name;
+  }
   void subscribeCheck()
   {
     //auto topic_type = getROSType(nh.resolveName(topic_));
     //auto topic_types = node_ptr_->get_topic_names_and_types()[topic_];
-    auto topic_type = node_ptr_->get_topic_names_and_types()[topic_];
+
+    auto topic = resolve_topic_name(topic_);
+
+    auto topic_type = node_ptr_->get_topic_names_and_types()[topic];
 
     if(topic_type.empty()){
       std::stringstream msg;
-      msg << "Unknown " << T::sensor_type << " topic type for: " << topic_;
+      msg << "Unknown " << T::sensor_type << " topic type for: " << topic;
 
       RCLCPP_WARN_THROTTLE(
           node_ptr_->get_logger(),

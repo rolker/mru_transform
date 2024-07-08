@@ -148,9 +148,10 @@ void MRUTransform::updateVelocity(const rclcpp::Time &now)
     tf2::Quaternion orientation_quat;
     tf2::fromMsg(latest_orientation_.orientation, orientation_quat);
 
-    geometry_msgs::msg::TransformStamped odom_base_rotation;
-    odom_base_rotation.transform.rotation = tf2::toMsg(orientation_quat.inverse());
-    tf2::doTransform(latest_velocity_.twist.linear, odom_.twist.twist.linear, odom_base_rotation);
+    //geometry_msgs::msg::TransformStamped odom_base_rotation;
+    // odom_base_rotation.transform.rotation = tf2::toMsg(orientation_quat.inverse());
+    // tf2::doTransform(latest_velocity_.twist.linear, odom_.twist.twist.linear, odom_base_rotation);
+    odom_.twist.twist.linear = latest_velocity_.twist.linear;
     odom_pub_->publish(odom_);
   }
 }
