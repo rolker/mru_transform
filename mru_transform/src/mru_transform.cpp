@@ -5,9 +5,10 @@
 #include <geometry_msgs/msg/twist_with_covariance_stamped.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <geometry_msgs/msg/transform_stamped.hpp>
+#include <std_srvs/srv/trigger.hpp> // Include the Trigger service header
 
 #include <tf2/LinearMath/Quaternion.h>
-#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #include <tf2/utils.h>
 
 namespace p11 = project11;
@@ -66,6 +67,11 @@ MRUTransform::MRUTransform(rclcpp::Node::SharedPtr node_ptr)
     active_sensor_pubs_[s] = node_ptr->create_publisher<std_msgs::msg::String>(
         "nav/active_sensor/"+s,10);
   }
+
+  // Initialize the reset map frame service
+  reset_map_frame_service_ = node_ptr_->create_service<std_srvs::srv::Trigger>(
+      "reset_map_frame",
+      std::bind(&MRUTransform::resetMapFrameService, this, std::placeholders::_1, std::placeholders::_2));
 }
 
 void MRUTransform::updatePosition(const rclcpp::Time &now)
@@ -144,18 +150,21 @@ void MRUTransform::updateVelocity(const rclcpp::Time &now)
     odom_.header.stamp = latest_velocity_.header.stamp;
     odom_.child_frame_id = base_frame_;
 
-
     tf2::Quaternion orientation_quat;
     tf2::fromMsg(latest_orientation_.orientation, orientation_quat);
 
-    //geometry_msgs::msg::TransformStamped odom_base_rotation;
-    // odom_base_rotation.transform.rotation = tf2::toMsg(orientation_quat.inverse());
-    // tf2::doTransform(latest_velocity_.twist.linear, odom_.twist.twist.linear, odom_base_rotation);
     odom_.twist.twist.linear = latest_velocity_.twist.linear;
     odom_pub_->publish(odom_);
   }
 }
 
+void MRUTransform::resetMapFrameService(const std_srvs::srv::Trigger::Request::SharedPtr request,
+                                        std_srvs::srv::Trigger::Response::SharedPtr response)
+{
+  // Reset the map frame
+  mapFrame_.reset();
+  response->success = true;
+  response->message = "Map frame has been reset";
+}
+
 } // namespace mru_transform
-
-

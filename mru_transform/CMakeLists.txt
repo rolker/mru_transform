@@ -12,6 +12,7 @@ set(ROS_DEPENDS
   project11
   rclcpp
   sensor_msgs
+  std_srvs
   tf2
   tf2_geometry_msgs
   tf2_ros

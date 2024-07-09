@@ -8,6 +8,8 @@
 #include <mru_transform/velocity_sensor.hpp>
 #include <mru_transform/map_frame.hpp>
 #include <tf2_ros/transform_broadcaster.h>
+#include <std_srvs/srv/trigger.hpp> // Include the Trigger service header
+
 
 namespace mru_transform
 {
@@ -50,6 +52,10 @@ private:
     return false;
   }
 
+  void resetMapFrameService(const std_srvs::srv::Trigger::Request::SharedPtr request,
+                            std_srvs::srv::Trigger::Response::SharedPtr response);
+
+
   // list of sensors, in order of priority
   std::vector<std::shared_ptr<PositionSensor> > position_sensors_;
   std::vector<std::shared_ptr<OrientationSensor> > orientation_sensors_;
@@ -75,6 +81,8 @@ private:
   nav_msgs::msg::Odometry odom_;
 
   rclcpp::Node::SharedPtr node_ptr_;
+  rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr reset_map_frame_service_;
+
 };
 
 } // namespace mru_transform
