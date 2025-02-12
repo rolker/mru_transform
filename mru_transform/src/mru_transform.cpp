@@ -40,8 +40,8 @@ MRUTransform::MRUTransform(rclcpp::Node::SharedPtr node_ptr)
 
   odom_pub_ = node_ptr->create_publisher<nav_msgs::msg::Odometry>(odom_topic_, 50);
 
-  node_ptr->declare_parameter("sensors_names",sensor_names_);
-  node_ptr->get_parameter("sensors_names",sensor_names_);
+  node_ptr->declare_parameter("sensor_names",sensor_names_);
+  node_ptr->get_parameter("sensor_names",sensor_names_);
 
   for(auto sensor_name : sensor_names_){
     position_sensors_.push_back(std::make_shared<PositionSensor>(       node_ptr, sensor_name, [this](rclcpp::Time stamp)->void{this->updatePosition(stamp);}));

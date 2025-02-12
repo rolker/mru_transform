@@ -6,7 +6,7 @@ Multiple sensors can be configured in a priority list and the node can fallback 
 
 This node is designed for integrated sensors that combine a GPS with an IMU to provide complete position and attitude solutions. **It expects input topics to be synchronized.** In other words, they have the exact same timestamp.
 
-# Sensor topics
+## Sensor topics
 
 Each sensor is expected to publish on three topics:
 
@@ -16,15 +16,15 @@ Each sensor is expected to publish on three topics:
 
 Only the linear component of the velocity message is used. It describes velocity of the sensor in an ENU frame. The frame_id should reflect the sensor's frame.
 
-# Frames
+## Frames
 
 A `map` frame is created centered on the first position fix. An `earth` frame is also created and a transformation from ECEF to ENU used by the `map` frame is published. A null transformation from `map` to `odom` is also published. Finally, a transformation from `odom` to `base_link` is published with each sensor update.
 
 Additional frames are published which may be useful in special cases, such as a sensor that publishes data that is already corrected for pitch and roll. The `base_link_north_up` represents a frame at the `base_link` location without any orientation applied. A level frame with only heading applied is also published as `base_link_level`.
 
-# Parameters
+## Parameters
 
-## ~sensors
+### ~sensors
 
 A list of sensors which will be used in order. Each sensor entry has a name and a map of topics.
 
@@ -52,16 +52,16 @@ A list of sensors which will be used in order. Each sensor entry has a name and 
     
 If no sensors are found, a default sensor will be created with topics `position`, `orientation` and `velocity`.
     
-## ~base_frame, ~map_frame and ~odom_frame
+### ~base_frame, ~map_frame and ~odom_frame
 
 Override the frame_id's which default to `base_link`, `map` and `odom`. 
 
-## ~odom_topic
+### ~odom_topic
 
 The topic used to publish odometry messages. Defaults to `odom`.
 
-# Credits
+## Credits
 
-Origionally Developed by: Roland Arsenault,  University of New Hampsire [Center for Coastal and Ocean Mapping](https://github.com/CCOMJHC)
+Originally Developed by: Roland Arsenault,  University of New Hampshire [Center for Coastal and Ocean Mapping](https://github.com/CCOMJHC)
 
 ROS2 migration: Dr. Kristopher Kransosky, [Seaward Science](https://github.com/SeawardScience)
