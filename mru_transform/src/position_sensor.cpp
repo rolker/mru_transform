@@ -21,13 +21,13 @@ bool PositionSensor::subscribe(const std::string &topic, const std::string &topi
   if(topic_type == "sensor_msgs/msg/NavSatFix")
   {
     subs_.navsat_fix = node_ptr_->create_subscription<sensor_msgs::msg::NavSatFix>(
-        topic_, 5, std::bind(&PositionSensor::navSatFixCallback, this, _1));
+        topic_, rclcpp::SensorDataQoS(), std::bind(&PositionSensor::navSatFixCallback, this, _1));
     return true;
   }
   if(topic_type == "geographic_msgs/msg/GeoPoseStamped")
   {
     subs_.geo_pose_stamped = node_ptr_->create_subscription<geographic_msgs::msg::GeoPoseStamped>(
-        topic_, 5, std::bind(&PositionSensor::geoPoseCallback, this, _1));
+        topic_, rclcpp::SensorDataQoS(), std::bind(&PositionSensor::geoPoseCallback, this, _1));
     return true;
   }
   RCLCPP_WARN_THROTTLE(

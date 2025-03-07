@@ -22,13 +22,13 @@ bool VelocitySensor::subscribe(const std::string &topic, const std::string &topi
   if (topic_type == "geometry_msgs/msg/TwistWithCovarianceStamped")
   {
     subs_.twist_with_covariance_stamped = node_ptr_->create_subscription<geometry_msgs::msg::TwistWithCovarianceStamped>(
-        topic_, 5, std::bind(&VelocitySensor::twistWithCovarianceCallback, this, _1));
+        topic_, rclcpp::SensorDataQoS(), std::bind(&VelocitySensor::twistWithCovarianceCallback, this, _1));
     return true;
   }
   if(topic_type == "geometry_msgs/msg/TwistStamped")
   {
     subs_.twist_stamped = node_ptr_->create_subscription<geometry_msgs::msg::TwistStamped>(
-        topic_, 5, std::bind(&VelocitySensor::twistCallback, this, _1));
+        topic_, rclcpp::SensorDataQoS(), std::bind(&VelocitySensor::twistCallback, this, _1));
     return true;
   }
   RCLCPP_WARN_THROTTLE(
