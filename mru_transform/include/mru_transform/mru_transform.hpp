@@ -24,13 +24,20 @@ public:
   void updateVelocity(const rclcpp::Time &timestamp);
 
 private:
-  template<typename T, typename VST> bool updateLatest(T &value,  const VST& sensors, const rclcpp::Time& now)
+  /// @brief Updates the value from the first non-timed-out sensor.
+  /// @tparam T Sensor value type
+  /// @tparam SensorVectorT Vector of sensors type
+  /// @param value Contains the last value for this sensor type ans is used to return the updated sensor value
+  /// @param sensors Vector of sensors 
+  /// @param now Current time used to detect expired messages
+  /// @return True if a valid value was found
+  template<typename T, typename SensorVectorT> bool updateLatest(T &value,  const SensorVectorT& sensors, const rclcpp::Time& now)
   {
     for(auto s: sensors){
       rclcpp::Time sensor_time = s->lastValue().header.stamp;
       rclcpp::Time value_time = value.header.stamp;
       auto msg_age = now - sensor_time;
-      if(now - s->lastValue().header.stamp < sensor_timeout_){
+      if(msg_age < sensor_timeout_){
         if(sensor_time > value_time){
           value = s->lastValue();
           std_msgs::msg::String active;
@@ -39,14 +46,10 @@ private:
           return true;
         }
         else{
-          double age = (msg_age.nanoseconds() / 1.0e9) - (msg_age.nanoseconds() / 1.0e9);
-          RCLCPP_WARN(node_ptr_->get_logger(),
-                      "time from sensor %s received out of order",
-                      s->name().c_str() );
+          RCLCPP_WARN_STREAM_THROTTLE(node_ptr_->get_logger(), *node_ptr_->get_clock(), 1000, "skipping message with time " <<  (value_time - sensor_time).seconds() << " seconds behind last value from sensor " << s->name());
         }
       }else{
-        double age = msg_age.nanoseconds() / 1.0e9;
-        RCLCPP_WARN(node_ptr_->get_logger(), "time from sensor %s timeout, age: %fs", s->name().c_str(),age);
+        RCLCPP_WARN_STREAM_THROTTLE(node_ptr_->get_logger(), *node_ptr_->get_clock(), 5000, "sensor " << s->name() << "'s value is stale, age: " << msg_age.seconds() << " seconds");
       }
     }
     return false;
