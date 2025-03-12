@@ -25,7 +25,7 @@ private:
 
   void navSatFixCallback(const sensor_msgs::msg::NavSatFix::SharedPtr msg);
 
-  void geoPoseCallback(const geographic_msgs::msg::GeoPoseStamped::ConstPtr& msg);
+  void geoPoseCallback(const geographic_msgs::msg::GeoPoseStamped::SharedPtr msg);
 };
 
 } // namespace mru_transform

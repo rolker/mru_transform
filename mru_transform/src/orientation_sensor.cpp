@@ -51,14 +51,14 @@ void OrientationSensor::imuCallback(const sensor_msgs::msg::Imu::SharedPtr msg)
   update_callback_(msg->header.stamp);
 }
 
-void OrientationSensor::quaternionCallback(const geometry_msgs::msg::QuaternionStamped::ConstPtr& msg)
+void OrientationSensor::quaternionCallback(const geometry_msgs::msg::QuaternionStamped::SharedPtr msg)
 {
   latest_value_.header = msg->header;
   latest_value_.orientation = msg->quaternion;
   update_callback_(msg->header.stamp);
 }
 
-void OrientationSensor::geoPoseCallback(const geographic_msgs::msg::GeoPoseStamped::ConstPtr& msg)
+void OrientationSensor::geoPoseCallback(const geographic_msgs::msg::GeoPoseStamped::SharedPtr msg)
 {
   latest_value_.header = msg->header;
   latest_value_.orientation = msg->pose.orientation;

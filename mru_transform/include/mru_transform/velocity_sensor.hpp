@@ -21,8 +21,8 @@ private:
   bool subscribe(const std::string &topic, const std::string &topic_type);
   friend class SensorBase<VelocitySensor>;
 
-  void twistWithCovarianceCallback(const geometry_msgs::msg::TwistWithCovarianceStamped::ConstPtr& msg);
-  void twistCallback(const geometry_msgs::msg::TwistStamped::ConstPtr& msg);
+  void twistWithCovarianceCallback(const geometry_msgs::msg::TwistWithCovarianceStamped::SharedPtr msg);
+  void twistCallback(const geometry_msgs::msg::TwistStamped::SharedPtr msg);
 };
 
 } // namespace mru_transform

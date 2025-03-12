@@ -40,14 +40,14 @@ bool VelocitySensor::subscribe(const std::string &topic, const std::string &topi
   return false;
 }
 
-void VelocitySensor::twistWithCovarianceCallback(const geometry_msgs::msg::TwistWithCovarianceStamped::ConstPtr& msg)
+void VelocitySensor::twistWithCovarianceCallback(const geometry_msgs::msg::TwistWithCovarianceStamped::SharedPtr msg)
 {
   latest_value_.header = msg->header;
   latest_value_.twist = msg->twist.twist;
   update_callback_(msg->header.stamp);
 }
 
-void VelocitySensor::twistCallback(const geometry_msgs::msg::TwistStamped::ConstPtr& msg)
+void VelocitySensor::twistCallback(const geometry_msgs::msg::TwistStamped::SharedPtr msg)
 {
   latest_value_ = *msg;
   update_callback_(msg->header.stamp);

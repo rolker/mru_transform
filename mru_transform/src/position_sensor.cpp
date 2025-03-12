@@ -51,7 +51,7 @@ void PositionSensor::navSatFixCallback(const sensor_msgs::msg::NavSatFix::Shared
   }
 }
 
-void PositionSensor::geoPoseCallback(const geographic_msgs::msg::GeoPoseStamped::ConstPtr& msg)
+void PositionSensor::geoPoseCallback(const geographic_msgs::msg::GeoPoseStamped::SharedPtr msg)
 {
   latest_value_.header = msg->header;
   latest_value_.position = msg->pose.position;
