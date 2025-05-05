@@ -4,7 +4,7 @@ This ROS node listens to Motion Reference Unit topics and publishes transforms t
 
 Multiple sensors can be configured in a priority list and the node can fallback to secondary sensors if the primary one stops providing data.
 
-This node is designed for integrated sensors that combine a GPS with an IMU to provide complete position and attitude solutions. **It expects input topics to be synchronized.** In other words, they have the exact same timestamp.
+This node is designed for integrated sensors that combine a GPS with an IMU to provide complete position and attitude solutions.
 
 ## Sensor topics
 
@@ -36,7 +36,7 @@ A list of sensors which will be used in order. Each sensor entry has a name and 
     sensor_names:
     - posmv
     - gps
-    # then convigure the actual sensors
+    # then configure the actual sensors
     sensors:
       posmv:
         topics:  
