@@ -47,12 +47,8 @@ protected:
     node_ptr_(node),
     name_(name)
   {
-    //node_ptr_ = node;
-    //topic_ = std::string(sensor_param["topics"][sensor_type]);
-    //name_ = std::string(sensor_param["name"]);
     node_ptr_->declare_parameter<std::string>("sensors."+name+".topics." + sensor_type, "");
     node_ptr_->get_parameter("sensors."+name+".topics." + sensor_type, topic_);
-    // name_ = name;
     if(topic_!=""){
       subscribeCheck();
     }
@@ -72,9 +68,6 @@ protected:
   }
   void subscribeCheck()
   {
-    //auto topic_type = getROSType(nh.resolveName(topic_));
-    //auto topic_types = node_ptr_->get_topic_names_and_types()[topic_];
-
     auto topic = resolve_topic_name(topic_);
 
     auto topic_type = node_ptr_->get_topic_names_and_types()[topic];
@@ -112,6 +105,7 @@ protected:
   //rclcpp::GenericSubscription::SharedPtr subscriber_;
   struct{
     rclcpp::Subscription<sensor_msgs::msg::NavSatFix>::SharedPtr navsat_fix;
+    rclcpp::Subscription<geographic_msgs::msg::GeoPointStamped>::SharedPtr geo_point_stamped;
     rclcpp::Subscription<geographic_msgs::msg::GeoPoseStamped>::SharedPtr geo_pose_stamped;
     rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr imu;
     rclcpp::Subscription<geometry_msgs::msg::QuaternionStamped>::SharedPtr quaternion_stamped;

@@ -24,6 +24,12 @@ bool PositionSensor::subscribe(const std::string &topic, const std::string &topi
         topic_, rclcpp::SensorDataQoS(), std::bind(&PositionSensor::navSatFixCallback, this, _1));
     return true;
   }
+  if(topic_type == "geographic_msgs/msg/GeoPointStamped")
+  {
+    subs_.geo_point_stamped = node_ptr_->create_subscription<geographic_msgs::msg::GeoPointStamped>(
+        topic_, rclcpp::SensorDataQoS(), std::bind(&PositionSensor::geoPointCallback, this, _1));
+    return true;
+  }
   if(topic_type == "geographic_msgs/msg/GeoPoseStamped")
   {
     subs_.geo_pose_stamped = node_ptr_->create_subscription<geographic_msgs::msg::GeoPoseStamped>(
@@ -34,7 +40,7 @@ bool PositionSensor::subscribe(const std::string &topic, const std::string &topi
     node_ptr_->get_logger(),
     *node_ptr_->get_clock(),
     30 * 1000,  // Throttle interval in milliseconds
-    "Supported position types: sensor_msgs/NavSatFix, geographic_msgs/GeoPoseStamped"
+    "Supported position types: sensor_msgs/NavSatFix, geographic_msgs/GeoPoseStamped, geographic_msgs/GeoPointStamped"
     );
   return false;
 }
@@ -49,6 +55,13 @@ void PositionSensor::navSatFixCallback(const sensor_msgs::msg::NavSatFix::Shared
     latest_value_.position.altitude = msg->altitude;
     update_callback_(msg->header.stamp);
   }
+}
+
+void PositionSensor::geoPointCallback(const geographic_msgs::msg::GeoPointStamped::SharedPtr msg)
+{
+  latest_value_.header = msg->header;
+  latest_value_.position = msg->position;
+  update_callback_(msg->header.stamp);
 }
 
 void PositionSensor::geoPoseCallback(const geographic_msgs::msg::GeoPoseStamped::SharedPtr msg)

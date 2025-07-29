@@ -15,6 +15,7 @@ set(ROS_DEPENDS
   std_srvs
   tf2
   tf2_geometry_msgs
+  tf2_msgs
   tf2_ros
 )
 
