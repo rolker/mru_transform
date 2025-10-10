@@ -9,18 +9,17 @@
 namespace mru_transform
 {
 
-class OrientationSensor: public SensorBase<OrientationSensor>
+class OrientationSensor: public SensorBase<sensor_msgs::msg::Imu>
 {
-public:
-  using ValueType = sensor_msgs::msg::Imu;
+  using BaseType = SensorBase<sensor_msgs::msg::Imu>;
 
-  OrientationSensor(std::function<void(const rclcpp::Time&)> update_callback);
-  OrientationSensor(rclcpp::Node::SharedPtr node, std::string name, std::function<void(const rclcpp::Time&)> update_callback);
+public:
+  OrientationSensor(CallbackType callback);
+  OrientationSensor(rclcpp::Node::SharedPtr node, std::string name, CallbackType callback);
 
 private:
-  ValueType latest_value_;
-  friend class SensorBase<OrientationSensor>;
-  bool subscribe(const std::string &topic, const std::string &topic_type);
+  bool subscribe(const std::string &topic, const std::string &topic_type) override;
+
   void imuCallback(const sensor_msgs::msg::Imu::SharedPtr msg);
   void quaternionCallback(const geometry_msgs::msg::QuaternionStamped::SharedPtr msg);
   void geoPoseCallback(const geographic_msgs::msg::GeoPoseStamped::SharedPtr msg);

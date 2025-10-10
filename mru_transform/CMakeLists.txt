@@ -30,6 +30,7 @@ find_package(tf2_ros REQUIRED)
 add_library(${PROJECT_NAME} SHARED
   src/map_frame.cpp
   src/mru_transform.cpp
+  src/navigation_sensors.cpp
   src/orientation_sensor.cpp
   src/position_sensor.cpp
   src/velocity_sensor.cpp
@@ -71,7 +72,6 @@ install(
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
 ament_export_dependencies(some_dependency)
 
-
 #############
 ##  nodes  ##
 #############
@@ -105,7 +105,6 @@ target_link_libraries(sea_surface_estimator
 install(TARGETS sea_surface_estimator
   DESTINATION lib/${PROJECT_NAME}
 )
-
 
 #############
 ## testing ##

@@ -8,18 +8,16 @@
 namespace mru_transform
 {
 
-class VelocitySensor: public SensorBase<VelocitySensor>
+class VelocitySensor: public SensorBase<geometry_msgs::msg::TwistStamped>
 {
-public:
-  using ValueType = geometry_msgs::msg::TwistStamped;
+  using BaseType = SensorBase<geometry_msgs::msg::TwistStamped>;
 
-  VelocitySensor(std::function<void(const rclcpp::Time&)> update_callback);
-  VelocitySensor(rclcpp::Node::SharedPtr node, std::string name, std::function<void(const rclcpp::Time&)> update_callback);
+public:
+  VelocitySensor(CallbackType callback);
+  VelocitySensor(rclcpp::Node::SharedPtr node, std::string name, CallbackType callback);
 
 private:
-  ValueType latest_value_;
-  bool subscribe(const std::string &topic, const std::string &topic_type);
-  friend class SensorBase<VelocitySensor>;
+  bool subscribe(const std::string &topic, const std::string &topic_type) override;
 
   void twistWithCovarianceCallback(const geometry_msgs::msg::TwistWithCovarianceStamped::SharedPtr msg);
   void twistCallback(const geometry_msgs::msg::TwistStamped::SharedPtr msg);

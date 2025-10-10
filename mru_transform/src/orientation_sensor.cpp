@@ -4,15 +4,15 @@ namespace mru_transform
 {
 
 template <>
-const std::string SensorBase<OrientationSensor>::sensor_type("orientation");
+const std::string SensorBase<sensor_msgs::msg::Imu>::sensor_type("orientation");
 
-OrientationSensor::OrientationSensor(std::function<void(const rclcpp::Time&)> update_callback)
-  :BaseType(update_callback)
+OrientationSensor::OrientationSensor(CallbackType callback)
+  :BaseType(callback)
 {
 }
 
-OrientationSensor::OrientationSensor(rclcpp::Node::SharedPtr node, std::string name, std::function<void(const rclcpp::Time&)> update_callback)
-  :BaseType(node, name,  update_callback)
+OrientationSensor::OrientationSensor(rclcpp::Node::SharedPtr node, std::string name, CallbackType callback)
+  :BaseType(node, name, callback)
 {
 }
 
@@ -47,23 +47,25 @@ bool OrientationSensor::subscribe(const std::string &topic, const std::string& t
 
 void OrientationSensor::imuCallback(const sensor_msgs::msg::Imu::SharedPtr msg)
 {
-  latest_value_ = *msg;
-  update_callback_(msg->header.stamp);
+  latest_value_.header = msg->header;
+  latest_value_.orientation = msg->orientation;
+  latest_value_.angular_velocity = msg->angular_velocity;
+  latest_value_.linear_acceleration = msg->linear_acceleration;
+  call_callbacks_(latest_value_);
 }
 
 void OrientationSensor::quaternionCallback(const geometry_msgs::msg::QuaternionStamped::SharedPtr msg)
 {
   latest_value_.header = msg->header;
   latest_value_.orientation = msg->quaternion;
-  update_callback_(msg->header.stamp);
+  call_callbacks_(latest_value_);
 }
 
 void OrientationSensor::geoPoseCallback(const geographic_msgs::msg::GeoPoseStamped::SharedPtr msg)
 {
   latest_value_.header = msg->header;
   latest_value_.orientation = msg->pose.orientation;
-  update_callback_(msg->header.stamp);
+  call_callbacks_(latest_value_);
 }
-
 
 } // namespace mru_transform

@@ -1,18 +1,20 @@
 #include "mru_transform/position_sensor.hpp"
+
 using std::placeholders::_1;
+
 namespace mru_transform
 {
 
 template <>
-const std::string SensorBase<PositionSensor>::sensor_type("position");
+const std::string SensorBase<geographic_msgs::msg::GeoPointStamped>::sensor_type("position");
 
-PositionSensor::PositionSensor(std::function<void(const rclcpp::Time&)> update_callback)
-:BaseType(update_callback)
+PositionSensor::PositionSensor(CallbackType callback)
+:BaseType(callback)
 {
 }
 
-PositionSensor::PositionSensor(rclcpp::Node::SharedPtr node, std::string name, std::function<void(const rclcpp::Time&)> update_callback)
-    :BaseType(node, name, update_callback)
+PositionSensor::PositionSensor(rclcpp::Node::SharedPtr node, std::string name, CallbackType callback)
+    :BaseType(node, name, callback)
 {
 }
 
@@ -47,7 +49,7 @@ void PositionSensor::navSatFixCallback(const sensor_msgs::msg::NavSatFix::Shared
     latest_value_.position.latitude = msg->latitude;
     latest_value_.position.longitude = msg->longitude;
     latest_value_.position.altitude = msg->altitude;
-    update_callback_(msg->header.stamp);
+    call_callbacks_(latest_value_);
   }
 }
 
@@ -55,8 +57,7 @@ void PositionSensor::geoPoseCallback(const geographic_msgs::msg::GeoPoseStamped:
 {
   latest_value_.header = msg->header;
   latest_value_.position = msg->pose.position;
-  update_callback_(msg->header.stamp);
+  call_callbacks_(latest_value_);
 }
-
 
 } // namespace mru_transform

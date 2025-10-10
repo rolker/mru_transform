@@ -6,14 +6,14 @@ namespace mru_transform
 {
 
 template <>
-const std::string SensorBase<VelocitySensor>::sensor_type("velocity");
+const std::string SensorBase<geometry_msgs::msg::TwistStamped>::sensor_type("velocity");
 
-VelocitySensor::VelocitySensor(std::function<void(const rclcpp::Time&)> update_callback):BaseType(update_callback)
+VelocitySensor::VelocitySensor(CallbackType callback):BaseType(callback)
 {
 }
 
-VelocitySensor::VelocitySensor(rclcpp::Node::SharedPtr node, std::string name, std::function<void(const rclcpp::Time&)> update_callback)
-    :BaseType(node, name, update_callback)
+VelocitySensor::VelocitySensor(rclcpp::Node::SharedPtr node, std::string name, CallbackType callback)
+    :BaseType(node, name, callback)
 {
 }
 
@@ -44,14 +44,13 @@ void VelocitySensor::twistWithCovarianceCallback(const geometry_msgs::msg::Twist
 {
   latest_value_.header = msg->header;
   latest_value_.twist = msg->twist.twist;
-  update_callback_(msg->header.stamp);
+  call_callbacks_(latest_value_);
 }
 
 void VelocitySensor::twistCallback(const geometry_msgs::msg::TwistStamped::SharedPtr msg)
 {
   latest_value_ = *msg;
-  update_callback_(msg->header.stamp);
+  call_callbacks_(latest_value_);
 }
-
 
 } // namespace mru_transform
