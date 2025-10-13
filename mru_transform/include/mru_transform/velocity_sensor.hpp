@@ -2,22 +2,19 @@
 #define MRU_TRANSFORM_VELOCITY_SENSOR_H
 
 #include "sensor.hpp"
-#include <geometry_msgs/msg/twist_with_covariance_stamped.hpp>
-#include <geometry_msgs/msg/twist_stamped.hpp>
+#include "geometry_msgs/msg/twist_with_covariance_stamped.hpp"
+#include "geometry_msgs/msg/twist_stamped.hpp"
 
 namespace mru_transform
 {
 
 class VelocitySensor: public SensorBase<geometry_msgs::msg::TwistStamped>
 {
-  using BaseType = SensorBase<geometry_msgs::msg::TwistStamped>;
-
 public:
-  VelocitySensor(CallbackType callback);
-  VelocitySensor(rclcpp::Node::SharedPtr node, std::string name, CallbackType callback);
+  VelocitySensor(NodeInterfaces node, std::string name, CallbackType callback);
 
 private:
-  bool subscribe(const std::string &topic, const std::string &topic_type) override;
+  bool subscribe(const std::vector<std::string> &topic_types) override;
 
   void twistWithCovarianceCallback(const geometry_msgs::msg::TwistWithCovarianceStamped::SharedPtr msg);
   void twistCallback(const geometry_msgs::msg::TwistStamped::SharedPtr msg);

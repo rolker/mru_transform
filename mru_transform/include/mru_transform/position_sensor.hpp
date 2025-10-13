@@ -11,13 +11,11 @@ namespace mru_transform
 
 class PositionSensor: public SensorBase<geographic_msgs::msg::GeoPointStamped>
 {
-  using BaseType = SensorBase<geographic_msgs::msg::GeoPointStamped>;
 public:
-  PositionSensor(CallbackType callback);
-  PositionSensor(rclcpp::Node::SharedPtr node, std::string name, CallbackType callback);
+  PositionSensor(NodeInterfaces node, std::string name, CallbackType callback);
 
 private:
-  bool subscribe(const std::string &topic, const std::string &topic_type) override;
+  bool subscribe(const std::vector<std::string> &topic_types) override;
 
   void navSatFixCallback(const sensor_msgs::msg::NavSatFix::SharedPtr msg);
 

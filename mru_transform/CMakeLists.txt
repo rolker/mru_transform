@@ -70,7 +70,19 @@ install(
 )
 
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
-ament_export_dependencies(some_dependency)
+ament_export_dependencies(
+  geographic_msgs
+  geometry_msgs
+  mru_transform_interfaces
+  nav_msgs
+  project11
+  rclcpp
+  sensor_msgs
+  std_srvs
+  tf2
+  tf2_geometry_msgs
+  tf2_ros
+)
 
 #############
 ##  nodes  ##

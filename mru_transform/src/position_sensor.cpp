@@ -8,33 +8,29 @@ namespace mru_transform
 template <>
 const std::string SensorBase<geographic_msgs::msg::GeoPointStamped>::sensor_type("position");
 
-PositionSensor::PositionSensor(CallbackType callback)
-:BaseType(callback)
-{
-}
-
-PositionSensor::PositionSensor(rclcpp::Node::SharedPtr node, std::string name, CallbackType callback)
+PositionSensor::PositionSensor(NodeInterfaces node, std::string name, CallbackType callback)
     :BaseType(node, name, callback)
 {
 }
 
-bool PositionSensor::subscribe(const std::string &topic, const std::string &topic_type)
+bool PositionSensor::subscribe(const std::vector<std::string> &topic_types)
 {
-  if(topic_type == "sensor_msgs/msg/NavSatFix")
+  for(const auto &topic_type: topic_types)
   {
-    subs_.navsat_fix = node_ptr_->create_subscription<sensor_msgs::msg::NavSatFix>(
-        topic_, rclcpp::SensorDataQoS(), std::bind(&PositionSensor::navSatFixCallback, this, _1));
-    return true;
-  }
-  if(topic_type == "geographic_msgs/msg/GeoPoseStamped")
-  {
-    subs_.geo_pose_stamped = node_ptr_->create_subscription<geographic_msgs::msg::GeoPoseStamped>(
-        topic_, rclcpp::SensorDataQoS(), std::bind(&PositionSensor::geoPoseCallback, this, _1));
-    return true;
+    if(topic_type == "sensor_msgs/msg/NavSatFix")
+    {
+      subs_.navsat_fix = rclcpp::create_subscription<sensor_msgs::msg::NavSatFix>(node_, topic_, rclcpp::SensorDataQoS(), std::bind(&PositionSensor::navSatFixCallback, this, _1));
+      return true;
+    }
+    if(topic_type == "geographic_msgs/msg/GeoPoseStamped")
+    {
+      subs_.geo_pose_stamped = rclcpp::create_subscription<geographic_msgs::msg::GeoPoseStamped>(node_, topic_, rclcpp::SensorDataQoS(), std::bind(&PositionSensor::geoPoseCallback, this, _1));
+      return true;
+    }
   }
   RCLCPP_WARN_THROTTLE(
-    node_ptr_->get_logger(),
-    *node_ptr_->get_clock(),
+    logger_,
+    *clock_,
     30 * 1000,  // Throttle interval in milliseconds
     "Supported position types: sensor_msgs/NavSatFix, geographic_msgs/GeoPoseStamped"
     );

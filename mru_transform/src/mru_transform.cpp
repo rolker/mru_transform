@@ -16,7 +16,7 @@ namespace p11 = project11;
 namespace mru_transform{
 
 MRUTransform::MRUTransform(rclcpp::Node::SharedPtr node)
-: sensors_(node, true),
+: sensors_(*node, true),
   node_(node)
 {
   node_->declare_parameter("map_frame", map_frame_);

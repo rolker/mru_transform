@@ -16,7 +16,6 @@ class MRUTransform
 {
 public:
   MRUTransform(rclcpp::Node::SharedPtr node_ptr);
-  void update();
   void updatePosition(const PositionSensor::ValueType &position);
   void updateOrientation(const OrientationSensor::ValueType &orientation);
   void updateVelocity(const VelocitySensor::ValueType &velocity);

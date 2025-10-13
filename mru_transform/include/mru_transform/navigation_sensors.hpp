@@ -5,6 +5,7 @@
 #include "mru_transform/velocity_sensor.hpp"
 #include "mru_transform/orientation_sensor.hpp"
 #include "std_msgs/msg/string.hpp"
+#include "rclcpp/node_interfaces/node_interfaces.hpp"
 
 namespace mru_transform
 {
@@ -13,7 +14,7 @@ namespace mru_transform
 class NavigationSensors
 {
 public:
-  NavigationSensors(rclcpp::Node::SharedPtr node, bool publish_active_sensors = false);
+  NavigationSensors(NodeInterfaces node, bool publish_active_sensors = false);
 
   /// @brief Register a callback to be called when a new valid position is available
   /// @param callback Function to be called with the latest position
@@ -24,6 +25,10 @@ public:
   /// @brief Register a callback to be called when a new valid velocity is available
   /// @param callback Function to be called with the latest velocity
   void registerVelocityCallback(VelocitySensor::CallbackType  callback);
+
+  const PositionSensor::ValueType & latest_position() const;
+  const OrientationSensor::ValueType & latest_orientation() const;
+  const VelocitySensor::ValueType & latest_velocity() const;
 
 private:
   /// @brief Updates the value from the first non-timed-out sensor.
@@ -42,16 +47,19 @@ private:
       if(msg_age < sensor_timeout_){
         if(sensor_time > value_time){
           value = s->latest_value();
-          std_msgs::msg::String active;
-          active.data = s->name();
-          active_sensor_pubs_[s->sensor_type]->publish(active);
+          if(active_sensor_pubs_.find(s->sensor_type) != active_sensor_pubs_.end())
+          {
+            std_msgs::msg::String active;
+            active.data = s->name();
+            active_sensor_pubs_[s->sensor_type]->publish(active);
+          }
           return true;
         }
         else{
-          RCLCPP_WARN_STREAM_THROTTLE(node_->get_logger(), *node_->get_clock(), 1000, "skipping message with time " <<  (value_time - sensor_time).seconds() << " seconds behind last value from sensor " << s->name());
+          RCLCPP_WARN_STREAM_THROTTLE(logger_, *clock_, 1000, "skipping message with time " <<  (value_time - sensor_time).seconds() << " seconds behind last value from sensor " << s->name());
         }
       }else{
-        RCLCPP_WARN_STREAM_THROTTLE(node_->get_logger(), *node_->get_clock(), 5000, "sensor " << s->name() << "'s value is stale, age: " << msg_age.seconds() << " seconds");
+        RCLCPP_WARN_STREAM_THROTTLE(logger_, *clock_, 5000, "sensor " << s->name() << "'s value is stale, age: " << msg_age.seconds() << " seconds");
       }
     }
     return false;
@@ -61,7 +69,9 @@ private:
   void orientationCallback(const OrientationSensor::ValueType &orientation);
   void velocityCallback(const VelocitySensor::ValueType &velocity);
 
-  std::shared_ptr<rclcpp::Node> node_;
+  NodeInterfaces node_;
+  rclcpp::Clock::SharedPtr clock_;
+  rclcpp::Logger logger_;
 
   // list of sensors, in order of priority
   std::vector<std::shared_ptr<PositionSensor> > position_sensors_;
@@ -76,7 +86,7 @@ private:
 
   rclcpp::Duration sensor_timeout_ = rclcpp::Duration(1.0s);
 
-  std::vector<std::string> sensor_names_ = {"example_sensor"};
+  std::vector<std::string> sensor_names_ = {"default"};
 
   std::vector<PositionSensor::CallbackType> position_callbacks_;
   std::vector<OrientationSensor::CallbackType> orientation_callbacks_;

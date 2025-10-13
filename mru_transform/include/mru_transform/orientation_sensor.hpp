@@ -11,14 +11,12 @@ namespace mru_transform
 
 class OrientationSensor: public SensorBase<sensor_msgs::msg::Imu>
 {
-  using BaseType = SensorBase<sensor_msgs::msg::Imu>;
-
 public:
   OrientationSensor(CallbackType callback);
-  OrientationSensor(rclcpp::Node::SharedPtr node, std::string name, CallbackType callback);
+  OrientationSensor(NodeInterfaces node, std::string name, CallbackType callback);
 
 private:
-  bool subscribe(const std::string &topic, const std::string &topic_type) override;
+  bool subscribe(const std::vector<std::string> &topic_types) override;
 
   void imuCallback(const sensor_msgs::msg::Imu::SharedPtr msg);
   void quaternionCallback(const geometry_msgs::msg::QuaternionStamped::SharedPtr msg);
