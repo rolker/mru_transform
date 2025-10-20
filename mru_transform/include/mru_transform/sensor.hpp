@@ -2,6 +2,7 @@
 #define MRU_TRANSFORM_SENSOR_H
 
 #include <rclcpp/rclcpp.hpp>
+#include "rclcpp/node_interfaces/node_interfaces.hpp"
 
 #include <sensor_msgs/msg/nav_sat_fix.hpp>
 #include <geographic_msgs/msg/geo_point_stamped.hpp>
@@ -18,91 +19,101 @@ namespace mru_transform
 
 std::string getROSType(std::string topic);
 
+using NodeInterfaces = rclcpp::node_interfaces::NodeInterfaces<
+  rclcpp::node_interfaces::NodeBaseInterface,
+  rclcpp::node_interfaces::NodeClockInterface,
+  rclcpp::node_interfaces::NodeGraphInterface,
+  rclcpp::node_interfaces::NodeLoggingInterface,
+  rclcpp::node_interfaces::NodeParametersInterface,
+  rclcpp::node_interfaces::NodeTimersInterface,
+  rclcpp::node_interfaces::NodeTopicsInterface
+>;
+
+
 template<class T> 
 class SensorBase
 {
 public:
   static const std::string sensor_type;
 
+
+
   const std::string &name() const
   {
     return name_;
   }
 
-  const auto &lastValue() const
+  using ValueType = T;
+  using CallbackType = std::function<void(const ValueType&)>;
+
+  const ValueType &latest_value() const
   {
-    return static_cast<const T*>(this)->latest_value_;
+    return latest_value_;
   }
-  using BaseType = SensorBase<T>;
+
 protected:
+  using BaseType = SensorBase<T>;
 
-  SensorBase(std::function<void(const rclcpp::Time&)> update_callback):
-    update_callback_(update_callback)
+  SensorBase(NodeInterfaces node, std::string name, CallbackType callback):
+    node_(node),
+    clock_(node.get_node_clock_interface()->get_clock()),
+    logger_(node.get_node_logging_interface()->get_logger()),
+    name_(name),
+    topic_(sensor_type)
   {
-    subscribeCheck();
-  }
-
-  SensorBase(rclcpp::Node::SharedPtr node, std::string name, std::function<void(const rclcpp::Time&)> update_callback):
-    update_callback_(update_callback),
-    node_ptr_(node),
-    name_(name)
-  {
-    node_ptr_->declare_parameter<std::string>("sensors."+name+".topics." + sensor_type, "");
-    node_ptr_->get_parameter("sensors."+name+".topics." + sensor_type, topic_);
+    if(callback)
+      callbacks_.push_back(callback);
+    auto parameter_interface = node_.get_node_parameters_interface();
+    if(!parameter_interface->has_parameter("sensors."+name+".topics." + sensor_type))
+      parameter_interface->declare_parameter("sensors."+name+".topics." + sensor_type, rclcpp::ParameterValue(""));
+    topic_ = parameter_interface->get_parameter("sensors."+name+".topics." + sensor_type).as_string();
     if(topic_!=""){
       subscribeCheck();
     }
   }
 
-  void subscribeCheckCallback()
-  {
-      subscribeCheck();
-  }
+  virtual bool subscribe(const std::vector<std::string> &topic_types) = 0;
 
-  std::string resolve_topic_name(const std::string& topic_name) {
-    std::string namespace_ = node_ptr_->get_namespace();
-    if (!namespace_.empty() && namespace_.front() != '/') {
-      namespace_ = "/" + namespace_;
-    }
-    return namespace_ + "/" + topic_name;
-  }
+
   void subscribeCheck()
   {
-    auto topic = resolve_topic_name(topic_);
+    auto topic = node_.get_node_base_interface()->resolve_topic_or_service_name(topic_, false);
 
-    auto topic_type = node_ptr_->get_topic_names_and_types()[topic];
+    auto topic_types = node_.get_node_graph_interface()->get_topic_names_and_types()[topic];
 
-    if(topic_type.empty()){
+    if(topic_types.empty()){
       std::stringstream msg;
-      msg << "Unknown " << T::sensor_type << " topic type for: " << topic;
+      msg << "Unknown " << sensor_type << " topic type for: " << topic;
 
-      RCLCPP_WARN_THROTTLE(
-          node_ptr_->get_logger(),
-          *node_ptr_->get_clock(),
-          30 * 1000,  // Throttle interval in milliseconds
-          msg.str().c_str()
-          );
+      RCLCPP_WARN_THROTTLE(logger_, *clock_,
+          30 * 1000, msg.str().c_str()); // Throttle interval in milliseconds
     }
-    else if (!static_cast<T*>(this)->subscribe(topic_, topic_type[0])){
+    else if (!subscribe(topic_types)){
       std::stringstream msg;
-      msg <<"Unsupported " << T::sensor_type << " topic type for: " << topic_ << ", type: " << topic_type[0];
-      RCLCPP_WARN_THROTTLE(
-          node_ptr_->get_logger(),
-          *node_ptr_->get_clock(),
-          30 * 1000,  // Throttle interval in milliseconds
-          msg.str().c_str()
-          );
+      msg <<"Unsupported " << sensor_type << " topic type for: " << topic_ << ", types: ";
+      for(const auto &topic_type: topic_types)
+        msg << topic_type << ", ";
+      RCLCPP_WARN_STREAM_THROTTLE(logger_, *clock_,
+        30 * 1000,  // Throttle interval in milliseconds
+        msg.str()
+      );
     }
-      //ROS_WARN_STREAM_THROTTLE(30.0,"Unsupported " << T::sensor_type << " topic type for: " << topic_ << ", type: " << topic_type);
     else
       return; // subscribed, so bail out before setting a new timer
 
-    //subscribe_check_timer_ = nh.createTimer(ros::Duration(1.0), std::bind(&SensorBase<T>::subscribeCheckCallback, this, std::placeholders::_1) , true);
-    subscribe_check_timer_ = node_ptr_->create_wall_timer(
-        1000ms, std::bind(&SensorBase<T>::subscribeCheckCallback, this));
+    subscribe_check_timer_ = rclcpp::create_wall_timer(1000ms, [this]{this->subscribeCheck();}, nullptr, node_.get_node_base_interface().get(), node_.get_node_timers_interface().get());
   }
-  rclcpp::Node::SharedPtr node_ptr_;
-  //rclcpp::GenericSubscription::SharedPtr subscriber_;
+
+  void call_callbacks_(const ValueType& value)
+  {
+    for(auto &cb: callbacks_)
+      cb(value);
+  }
+
+  NodeInterfaces node_;
+  rclcpp::Clock::SharedPtr clock_;
+  rclcpp::Logger logger_;
+
   struct{
     rclcpp::Subscription<sensor_msgs::msg::NavSatFix>::SharedPtr navsat_fix;
     rclcpp::Subscription<geographic_msgs::msg::GeoPointStamped>::SharedPtr geo_point_stamped;
@@ -114,10 +125,10 @@ protected:
     rclcpp::Subscription<geometry_msgs::msg::TwistStamped>::SharedPtr twist_stamped;
   }subs_;
 
-
+  ValueType latest_value_;
   std::string name_ = "default";
-  std::string topic_ = T::sensor_type;
-  std::function<void(const rclcpp::Time&)> update_callback_;
+  std::string topic_;
+  std::vector<CallbackType> callbacks_;
   rclcpp::TimerBase::SharedPtr subscribe_check_timer_;
 };
 

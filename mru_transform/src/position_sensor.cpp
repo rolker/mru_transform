@@ -1,44 +1,41 @@
 #include "mru_transform/position_sensor.hpp"
+
 using std::placeholders::_1;
+
 namespace mru_transform
 {
 
 template <>
-const std::string SensorBase<PositionSensor>::sensor_type("position");
+const std::string SensorBase<geographic_msgs::msg::GeoPointStamped>::sensor_type("position");
 
-PositionSensor::PositionSensor(std::function<void(const rclcpp::Time&)> update_callback)
-:BaseType(update_callback)
+PositionSensor::PositionSensor(NodeInterfaces node, std::string name, CallbackType callback)
+    :BaseType(node, name, callback)
 {
 }
 
-PositionSensor::PositionSensor(rclcpp::Node::SharedPtr node, std::string name, std::function<void(const rclcpp::Time&)> update_callback)
-    :BaseType(node, name, update_callback)
+bool PositionSensor::subscribe(const std::vector<std::string> &topic_types)
 {
-}
-
-bool PositionSensor::subscribe(const std::string &topic, const std::string &topic_type)
-{
-  if(topic_type == "sensor_msgs/msg/NavSatFix")
+  for(const auto &topic_type: topic_types)
   {
-    subs_.navsat_fix = node_ptr_->create_subscription<sensor_msgs::msg::NavSatFix>(
-        topic_, rclcpp::SensorDataQoS(), std::bind(&PositionSensor::navSatFixCallback, this, _1));
-    return true;
-  }
-  if(topic_type == "geographic_msgs/msg/GeoPointStamped")
-  {
-    subs_.geo_point_stamped = node_ptr_->create_subscription<geographic_msgs::msg::GeoPointStamped>(
-        topic_, rclcpp::SensorDataQoS(), std::bind(&PositionSensor::geoPointCallback, this, _1));
-    return true;
-  }
-  if(topic_type == "geographic_msgs/msg/GeoPoseStamped")
-  {
-    subs_.geo_pose_stamped = node_ptr_->create_subscription<geographic_msgs::msg::GeoPoseStamped>(
-        topic_, rclcpp::SensorDataQoS(), std::bind(&PositionSensor::geoPoseCallback, this, _1));
-    return true;
+    if(topic_type == "sensor_msgs/msg/NavSatFix")
+    {
+      subs_.navsat_fix = rclcpp::create_subscription<sensor_msgs::msg::NavSatFix>(node_, topic_, rclcpp::SensorDataQoS(), std::bind(&PositionSensor::navSatFixCallback, this, _1));
+      return true;
+    }
+    if(topic_type == "geographic_msgs/msg/GeoPointStamped")
+    {
+      subs_.geo_point_stamped = rclcpp::create_subscription<geographic_msgs::msg::GeoPointStamped>(node_, topic_, rclcpp::SensorDataQoS(), std::bind(&PositionSensor::geoPointCallback, this, _1));
+      return true;
+    }
+    if(topic_type == "geographic_msgs/msg/GeoPoseStamped")
+    {
+      subs_.geo_pose_stamped = rclcpp::create_subscription<geographic_msgs::msg::GeoPoseStamped>(node_, topic_, rclcpp::SensorDataQoS(), std::bind(&PositionSensor::geoPoseCallback, this, _1));
+      return true;
+    }
   }
   RCLCPP_WARN_THROTTLE(
-    node_ptr_->get_logger(),
-    *node_ptr_->get_clock(),
+    logger_,
+    *clock_,
     30 * 1000,  // Throttle interval in milliseconds
     "Supported position types: sensor_msgs/NavSatFix, geographic_msgs/GeoPoseStamped, geographic_msgs/GeoPointStamped"
     );
@@ -53,23 +50,21 @@ void PositionSensor::navSatFixCallback(const sensor_msgs::msg::NavSatFix::Shared
     latest_value_.position.latitude = msg->latitude;
     latest_value_.position.longitude = msg->longitude;
     latest_value_.position.altitude = msg->altitude;
-    update_callback_(msg->header.stamp);
+    call_callbacks_(latest_value_);
   }
 }
 
 void PositionSensor::geoPointCallback(const geographic_msgs::msg::GeoPointStamped::SharedPtr msg)
 {
-  latest_value_.header = msg->header;
-  latest_value_.position = msg->position;
-  update_callback_(msg->header.stamp);
+  latest_value_ = *msg;
+  call_callbacks_(latest_value_);
 }
 
 void PositionSensor::geoPoseCallback(const geographic_msgs::msg::GeoPoseStamped::SharedPtr msg)
 {
   latest_value_.header = msg->header;
   latest_value_.position = msg->pose.position;
-  update_callback_(msg->header.stamp);
+  call_callbacks_(latest_value_);
 }
-
 
 } // namespace mru_transform

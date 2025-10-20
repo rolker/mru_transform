@@ -9,19 +9,13 @@
 namespace mru_transform
 {
 
-class PositionSensor: public SensorBase<PositionSensor>
+class PositionSensor: public SensorBase<geographic_msgs::msg::GeoPointStamped>
 {
 public:
-  using ValueType = geographic_msgs::msg::GeoPointStamped;
-
-  PositionSensor(std::function<void(const rclcpp::Time&)> update_callback);
-  PositionSensor(rclcpp::Node::SharedPtr node, std::string name, std::function<void(const rclcpp::Time&)> update_callback);
+  PositionSensor(NodeInterfaces node, std::string name, CallbackType callback);
 
 private:
-  friend class SensorBase<PositionSensor>;
-  ValueType latest_value_;
-
-  bool subscribe(const std::string &topic, const std::string &topic_type);
+  bool subscribe(const std::vector<std::string> &topic_types) override;
 
   void navSatFixCallback(const sensor_msgs::msg::NavSatFix::SharedPtr msg);
 
