@@ -9,6 +9,7 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 endif()
 
 find_package(ament_cmake REQUIRED)
+find_package(geodesy REQUIRED)
 find_package(geographic_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(mru_transform_interfaces REQUIRED)
@@ -54,6 +55,10 @@ target_link_libraries(${PROJECT_NAME}
   tf2::tf2
   ${tf2_geometry_msgs_TARGETS}
   tf2_ros::tf2_ros
+)
+
+ament_target_dependencies(${PROJECT_NAME}
+  geodesy
 )
 
 install(

@@ -11,8 +11,6 @@
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #include <tf2/utils.h>
 
-namespace p11 = project11;
-
 namespace mru_transform{
 
 MRUTransform::MRUTransform(rclcpp::Node::SharedPtr node)
@@ -46,31 +44,30 @@ MRUTransform::MRUTransform(rclcpp::Node::SharedPtr node)
   sensors_.registerVelocityCallback(std::bind(&MRUTransform::updateVelocity, this, std::placeholders::_1));
 }
 
-void MRUTransform::updatePosition(const PositionSensor::ValueType &position)
+void MRUTransform::updatePosition(PositionSensor::ValueType position)
 {
-  p11::LatLongDegrees p;
-  p11::fromMsg(position.position, p);
-  if (std::isnan(p[2]))
-    p[2] = 0.0;
+  if(std::isnan(position.position.altitude))
+    position.position.altitude = 0.0;
 
   if(!mapFrame_)
   {
-    auto map_origin = p;
-    map_origin.altitude() = 0.0;
+    auto map_origin = position.position;
+    map_origin.altitude = 0.0;
     mapFrame_ = std::shared_ptr<MapFrame>(new MapFrame(node_, map_origin, map_frame_, odom_frame_));
   }
   auto transforms = mapFrame_->getTransforms(position.header.stamp);
-  p11::Point position_map = mapFrame_->toLocal(p);
+  auto position_map = mapFrame_->toLocal(position.position);
 
   geometry_msgs::msg::TransformStamped map_to_north_up_base_link;
   map_to_north_up_base_link.header.stamp = position.header.stamp;
   map_to_north_up_base_link.header.frame_id = map_frame_;
   map_to_north_up_base_link.child_frame_id = base_frame_+"_north_up";
-  p11::toMsg(position_map, map_to_north_up_base_link.transform.translation);
-  map_to_north_up_base_link.transform.rotation.w = 1.0;
+  map_to_north_up_base_link.transform.translation.x = position_map.x;
+  map_to_north_up_base_link.transform.translation.y = position_map.y;
+  map_to_north_up_base_link.transform.translation.z = position_map.z;
   transforms.push_back(map_to_north_up_base_link);
   broadcaster_->sendTransform(transforms);
-  p11::toMsg(position_map, odom_.pose.pose.position);
+  odom_.pose.pose.position = position_map;
 }
 
 void MRUTransform::updateOrientation(const OrientationSensor::ValueType &orientation)
