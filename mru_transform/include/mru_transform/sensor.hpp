@@ -68,7 +68,7 @@ protected:
       parameter_interface->declare_parameter("sensors."+name+".topics." + sensor_type, rclcpp::ParameterValue(""));
     topic_ = parameter_interface->get_parameter("sensors."+name+".topics." + sensor_type).as_string();
     if(topic_!=""){
-      subscribeCheck();
+      subscribe_check_timer_ = rclcpp::create_wall_timer(1000ms, [this]{this->subscribeCheck();}, nullptr, node_.get_node_base_interface().get(), node_.get_node_timers_interface().get());
     }
   }
 

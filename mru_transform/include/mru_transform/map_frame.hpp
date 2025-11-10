@@ -19,6 +19,7 @@
 namespace mru_transform
 {
 
+/// Manages transformations between a local map frame and Earth-centered coordinates.
 class MapFrame
 {
 public:

@@ -33,6 +33,10 @@ MRUTransform::MRUTransform(rclcpp::Node::SharedPtr node)
 
   odom_pub_ = node_->create_publisher<nav_msgs::msg::Odometry>(odom_topic_, 50);
 
+  // listener used to determine sensor to baselink transforms
+  tf_buffer_ = std::make_unique<tf2_ros::Buffer>(node_->get_clock());
+  tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_, node_, false);
+
 
   // Initialize the reset map frame service
   reset_map_frame_service_ = node_->create_service<std_srvs::srv::Trigger>(
@@ -58,13 +62,36 @@ void MRUTransform::updatePosition(PositionSensor::ValueType position)
   auto transforms = mapFrame_->getTransforms(position.header.stamp);
   auto position_map = mapFrame_->toLocal(position.position);
 
+  // account for sensor offset from base_link
+  tf2::Vector3 sensor_offset(0.0, 0.0, 0.0);
+
+  if(position.header.frame_id != base_frame_ && position.header.frame_id != "")
+  {
+    // assuming static sensor to base_link transform, so any time is ok
+    if(tf_buffer_->canTransform(base_frame_, position.header.frame_id, tf2::TimePointZero))
+    {
+      auto transform_stamped = tf_buffer_->lookupTransform(base_frame_, position.header.frame_id, tf2::TimePointZero);
+      tf2::fromMsg(transform_stamped.transform.translation, sensor_offset);
+
+      // to properly orient the sensor offset, we need to rotate it according to the base_link orientation relative to the map frame
+      if(tf_buffer_->canTransform(map_frame_, base_frame_, tf2::TimePointZero))
+      {
+        auto base_link_in_map = tf_buffer_->lookupTransform(map_frame_, base_frame_, tf2::TimePointZero);
+        tf2::Quaternion base_link_orientation;
+        tf2::fromMsg(base_link_in_map.transform.rotation, base_link_orientation);
+
+        sensor_offset = tf2::quatRotate(base_link_orientation, sensor_offset);
+      }
+    }
+  }
+
   geometry_msgs::msg::TransformStamped map_to_north_up_base_link;
   map_to_north_up_base_link.header.stamp = position.header.stamp;
   map_to_north_up_base_link.header.frame_id = map_frame_;
   map_to_north_up_base_link.child_frame_id = base_frame_+"_north_up";
-  map_to_north_up_base_link.transform.translation.x = position_map.x;
-  map_to_north_up_base_link.transform.translation.y = position_map.y;
-  map_to_north_up_base_link.transform.translation.z = position_map.z;
+  map_to_north_up_base_link.transform.translation.x = position_map.x-sensor_offset.x();
+  map_to_north_up_base_link.transform.translation.y = position_map.y-sensor_offset.y();
+  map_to_north_up_base_link.transform.translation.z = position_map.z-sensor_offset.z();
   transforms.push_back(map_to_north_up_base_link);
   broadcaster_->sendTransform(transforms);
   odom_.pose.pose.position = position_map;

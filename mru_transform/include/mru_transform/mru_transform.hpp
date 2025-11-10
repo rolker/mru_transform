@@ -6,7 +6,9 @@
 #include "std_msgs/msg/string.hpp"
 #include "mru_transform/navigation_sensors.hpp"
 #include "mru_transform/map_frame.hpp"
+#include "tf2_ros/buffer.h"
 #include "tf2_ros/transform_broadcaster.h"
+#include "tf2_ros/transform_listener.h"
 #include "std_srvs/srv/trigger.hpp" // Include the Trigger service header
 
 namespace mru_transform
@@ -38,6 +40,9 @@ private:
 
   rclcpp::Node::SharedPtr node_;
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr reset_map_frame_service_;
+  
+  std::shared_ptr<tf2_ros::TransformListener> tf_listener_{nullptr};
+  std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
 
 };
 
