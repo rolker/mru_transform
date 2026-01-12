@@ -76,6 +76,7 @@ install(
 
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
 ament_export_dependencies(
+  geodesy
   geographic_msgs
   geometry_msgs
   mru_transform_interfaces
@@ -122,6 +123,31 @@ target_link_libraries(sea_surface_estimator
 
 install(TARGETS sea_surface_estimator
   DESTINATION lib/${PROJECT_NAME}
+)
+
+add_executable(
+  nav_sat_fix_to_velocity
+  nodes/nav_sat_fix_to_velocity.cpp
+)
+
+target_link_libraries(nav_sat_fix_to_velocity
+  rclcpp::rclcpp
+  rclcpp_lifecycle::rclcpp_lifecycle
+  ${geographic_msgs_TARGETS}
+  ${sensor_msgs_TARGETS}
+)
+
+ament_target_dependencies(nav_sat_fix_to_velocity
+  geodesy
+)
+
+install(TARGETS nav_sat_fix_to_velocity
+  DESTINATION lib/${PROJECT_NAME}
+)
+
+
+install(DIRECTORY launch
+  DESTINATION share/${PROJECT_NAME}/
 )
 
 #############
