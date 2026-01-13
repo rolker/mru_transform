@@ -14,8 +14,8 @@ find_package(geographic_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(mru_transform_interfaces REQUIRED)
 find_package(nav_msgs REQUIRED)
-find_package(project11 REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(rclcpp_lifecycle REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
 find_package(tf2 REQUIRED)
@@ -48,7 +48,6 @@ target_link_libraries(${PROJECT_NAME}
   ${geometry_msgs_TARGETS}
   ${mru_transform_interfaces_TARGETS}
   ${nav_msgs_TARGETS}
-  project11::project11
   rclcpp::rclcpp
   ${sensor_msgs_TARGETS}
   ${std_srvs_TARGETS}
@@ -81,7 +80,6 @@ ament_export_dependencies(
   geometry_msgs
   mru_transform_interfaces
   nav_msgs
-  project11
   rclcpp
   sensor_msgs
   std_srvs
