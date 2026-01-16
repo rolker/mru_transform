@@ -13,9 +13,11 @@
   <depend>geodesy</depend>
   <depend>mru_transform_interfaces</depend>
   <depend>nav_msgs</depend>
-  <depend>project11</depend>
   <depend>rclcpp</depend>
+  <depend>rclcpp_lifecycle</depend>
   <depend>sensor_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>geographic_msgs</depend>
   <depend>tf2</depend>
   <depend>tf2_geometry_msgs</depend>
   <depend>tf2_msgs</depend>
