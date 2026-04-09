@@ -22,6 +22,9 @@ find_package(tf2 REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
 
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(PROJ REQUIRED IMPORTED_TARGET proj)
+
 
 #############
 ## library ##
@@ -144,8 +147,31 @@ install(TARGETS nav_sat_fix_to_velocity
 )
 
 
+add_executable(
+  chart_datum_node
+  nodes/chart_datum_node.cpp
+)
+
+target_link_libraries(chart_datum_node
+  rclcpp::rclcpp
+  rclcpp_lifecycle::rclcpp_lifecycle
+  ${nav_msgs_TARGETS}
+  ${sensor_msgs_TARGETS}
+  tf2_ros::tf2_ros
+  PkgConfig::PROJ
+)
+
+install(TARGETS chart_datum_node
+  DESTINATION lib/${PROJECT_NAME}
+)
+
 install(DIRECTORY launch
   DESTINATION share/${PROJECT_NAME}/
+)
+
+install(DIRECTORY scripts/
+  DESTINATION share/${PROJECT_NAME}/scripts
+  USE_SOURCE_PERMISSIONS
 )
 
 #############
