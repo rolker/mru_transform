@@ -2,31 +2,30 @@
 //
 // Uses PROJ to compute the static vertical offset between the WGS84
 // ellipsoid (map frame) and chart datum (MLLW) at the robot's current
-// position. The offset is position-dependent and only re-queried when
-// the robot moves beyond update_distance.
+// position. The offset is position-dependent and recalculated
+// periodically. The transform is published at a faster rate using
+// the cached value.
+//
+// Position is obtained from the TF tree (earth → base_link → ECEF →
+// lat/lon via geodesy).
 //
 // Requires:
 //   - PROJ geoid grid (e.g., us_noaa_g2018u0.tif) for ellipsoid → NAVD88
 //   - VDatum regional .gtx grids for NAVD88 → MLLW
-//
-// The PROJ pipeline:
-//   +proj=pipeline
-//   +step +proj=vgridshift +grids=<geoid_grid>
-//   +step +proj=vgridshift +grids=<mllw_grid1>,<mllw_grid2>,...
 
 #include <cmath>
 #include <filesystem>
 #include <string>
-#include <vector>
 
 #include "proj.h"
 
+#include "geodesy/ecef.h"
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_lifecycle/lifecycle_node.hpp"
 #include "lifecycle_msgs/msg/state.hpp"
-#include "nav_msgs/msg/odometry.hpp"
-#include "sensor_msgs/msg/nav_sat_fix.hpp"
+#include "tf2_ros/buffer.h"
 #include "tf2_ros/transform_broadcaster.h"
+#include "tf2_ros/transform_listener.h"
 
 namespace fs = std::filesystem;
 
@@ -51,14 +50,23 @@ public:
     declare_parameter("chart_datum_frame", chart_datum_frame_);
     get_parameter("chart_datum_frame", chart_datum_frame_);
 
+    declare_parameter("map_frame", map_frame_);
+    get_parameter("map_frame", map_frame_);
+
+    declare_parameter("base_frame", base_frame_);
+    get_parameter("base_frame", base_frame_);
+
     declare_parameter("geoid_grid", std::string(""));
     get_parameter("geoid_grid", geoid_grid_path_);
 
     declare_parameter("vdatum_grid_dir", std::string(""));
     get_parameter("vdatum_grid_dir", vdatum_grid_dir_);
 
-    declare_parameter("update_distance", update_distance_);
-    get_parameter("update_distance", update_distance_);
+    declare_parameter("publish_rate", publish_rate_);
+    get_parameter("publish_rate", publish_rate_);
+
+    declare_parameter("recalc_interval", recalc_interval_);
+    get_parameter("recalc_interval", recalc_interval_);
 
     if (geoid_grid_path_.empty()) {
       RCLCPP_ERROR(get_logger(), "geoid_grid parameter is required");
@@ -74,42 +82,49 @@ public:
       return CallbackReturn::FAILURE;
     }
 
-    transform_broadcaster_ =
+    tf_buffer_ = std::make_shared<tf2_ros::Buffer>(get_clock());
+    tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
+    tf_broadcaster_ =
       std::make_shared<tf2_ros::TransformBroadcaster>(*this);
-
-    // Subscribe to odom for distance-based re-query and TF timestamps
-    odometry_subscription_ = create_subscription<nav_msgs::msg::Odometry>(
-      "odom", 10,
-      std::bind(
-        &ChartDatumNode::odometry_callback, this,
-        std::placeholders::_1));
-
-    // Subscribe to position for geographic coordinates (lat/lon)
-    position_subscription_ =
-      create_subscription<sensor_msgs::msg::NavSatFix>(
-      "position", 10,
-      std::bind(
-        &ChartDatumNode::position_callback, this,
-        std::placeholders::_1));
 
     return LifecycleNode::on_configure(state);
   }
 
   CallbackReturn on_activate(const rclcpp_lifecycle::State & state)
   {
+    publish_timer_ = create_wall_timer(
+      std::chrono::duration<double>(1.0 / publish_rate_),
+      std::bind(&ChartDatumNode::publish_callback, this));
+
+    recalc_timer_ = create_wall_timer(
+      std::chrono::duration<double>(recalc_interval_),
+      std::bind(&ChartDatumNode::recalc_callback, this));
+
+    // Trigger immediate first recalculation
+    recalc_callback();
+
     return LifecycleNode::on_activate(state);
+  }
+
+  CallbackReturn on_deactivate(const rclcpp_lifecycle::State & state)
+  {
+    publish_timer_.reset();
+    recalc_timer_.reset();
+    return LifecycleNode::on_deactivate(state);
   }
 
   CallbackReturn on_cleanup(const rclcpp_lifecycle::State & state)
   {
     cleanup_proj();
+    tf_buffer_.reset();
+    tf_listener_.reset();
+    tf_broadcaster_.reset();
     return LifecycleNode::on_cleanup(state);
   }
 
 private:
   bool setup_proj()
   {
-    // Find all MLLW .gtx grids in the vdatum directory
     std::string mllw_grids;
     try {
       for (const auto & entry :
@@ -140,9 +155,9 @@ private:
     }
 
     RCLCPP_INFO(
-      get_logger(), "Found MLLW grids in %s", vdatum_grid_dir_.c_str());
+      get_logger(), "Found MLLW grids in %s",
+      vdatum_grid_dir_.c_str());
 
-    // Build the PROJ pipeline string
     std::string pipeline =
       "+proj=pipeline "
       "+step +proj=vgridshift +grids=" + geoid_grid_path_ + " "
@@ -178,84 +193,75 @@ private:
     }
   }
 
-  void position_callback(
-    const sensor_msgs::msg::NavSatFix::SharedPtr msg)
+  void recalc_callback()
   {
-    last_longitude_ = msg->longitude;
-    last_latitude_ = msg->latitude;
-    has_geographic_position_ = true;
-  }
-
-  void odometry_callback(
-    const nav_msgs::msg::Odometry::SharedPtr msg)
-  {
-    if (get_current_state().id() !=
-      lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE)
-    {
+    // Look up earth → base_link to get ECEF position
+    geometry_msgs::msg::TransformStamped tf_stamped;
+    try {
+      tf_stamped = tf_buffer_->lookupTransform(
+        "earth", base_frame_, tf2::TimePointZero);
+    } catch (const tf2::TransformException & ex) {
+      RCLCPP_DEBUG(
+        get_logger(), "Cannot look up earth → %s: %s",
+        base_frame_.c_str(), ex.what());
       return;
     }
 
-    if (!has_geographic_position_) {
-      return;
-    }
+    // Convert ECEF → geographic (lat/lon)
+    geometry_msgs::msg::Point ecef_point;
+    ecef_point.x = tf_stamped.transform.translation.x;
+    ecef_point.y = tf_stamped.transform.translation.y;
+    ecef_point.z = tf_stamped.transform.translation.z;
 
-    // Check if we need to re-query (robot moved beyond update_distance)
-    double dx = msg->pose.pose.position.x - last_query_x_;
-    double dy = msg->pose.pose.position.y - last_query_y_;
-    double dist = std::sqrt(dx * dx + dy * dy);
-
-    if (has_valid_offset_ && dist < update_distance_) {
-      publish_transform(msg->header);
-      return;
-    }
+    auto geo = geodesy::toMsg(geodesy::ECEFPoint(ecef_point));
 
     // Query PROJ: (lon, lat, 0) → (lon, lat, height_above_mllw)
-    PJ_COORD input = proj_coord(
-      last_longitude_, last_latitude_, 0.0, 0.0);
+    PJ_COORD input = proj_coord(geo.longitude, geo.latitude, 0.0, 0.0);
     PJ_COORD output = proj_trans(proj_, PJ_FWD, input);
 
     if (output.xyz.z == HUGE_VAL ||
       std::isinf(output.xyz.z) || std::isnan(output.xyz.z))
     {
       RCLCPP_WARN_THROTTLE(
-        get_logger(), *get_clock(), 10000,
+        get_logger(), *get_clock(), 30000,
         "No VDatum coverage at (%.4f, %.4f)",
-        last_longitude_, last_latitude_);
+        geo.latitude, geo.longitude);
       return;
     }
 
-    // chart_datum (MLLW) is height_above_mllw meters below the
-    // ellipsoid (map frame)
     chart_datum_z_ = -output.xyz.z;
     has_valid_offset_ = true;
-    last_query_x_ = msg->pose.pose.position.x;
-    last_query_y_ = msg->pose.pose.position.y;
 
     RCLCPP_INFO_ONCE(
       get_logger(),
       "Chart datum at (%.4f, %.4f): %.3f m (MLLW below ellipsoid)",
-      last_longitude_, last_latitude_, chart_datum_z_);
-
-    publish_transform(msg->header);
+      geo.latitude, geo.longitude, chart_datum_z_);
   }
 
-  void publish_transform(const std_msgs::msg::Header & header)
+  void publish_callback()
   {
+    if (!has_valid_offset_) {
+      return;
+    }
+
     geometry_msgs::msg::TransformStamped transform;
-    transform.header = header;
+    transform.header.stamp = now();
+    transform.header.frame_id = map_frame_;
     transform.child_frame_id = chart_datum_frame_;
     transform.transform.translation.z = chart_datum_z_;
     transform.transform.rotation.w = 1.0;
 
-    transform_broadcaster_->sendTransform(transform);
+    tf_broadcaster_->sendTransform(transform);
   }
 
-  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr
-    odometry_subscription_;
-  rclcpp::Subscription<sensor_msgs::msg::NavSatFix>::SharedPtr
-    position_subscription_;
+  // TF
+  std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
+  std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
+  std::shared_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
 
-  std::shared_ptr<tf2_ros::TransformBroadcaster> transform_broadcaster_;
+  // Timers
+  rclcpp::TimerBase::SharedPtr publish_timer_;
+  rclcpp::TimerBase::SharedPtr recalc_timer_;
 
   // PROJ state
   PJ_CONTEXT * proj_context_ = nullptr;
@@ -263,20 +269,16 @@ private:
 
   // Parameters
   std::string chart_datum_frame_ = "chart_datum";
+  std::string map_frame_ = "map";
+  std::string base_frame_ = "base_link";
   std::string geoid_grid_path_;
   std::string vdatum_grid_dir_;
-  double update_distance_ = 1000.0;  // meters
+  double publish_rate_ = 1.0;       // Hz
+  double recalc_interval_ = 60.0;   // seconds
 
   // Cached state
   double chart_datum_z_ = 0.0;
   bool has_valid_offset_ = false;
-  double last_query_x_ = 0.0;
-  double last_query_y_ = 0.0;
-
-  // Geographic position (from NavSatFix subscription)
-  double last_longitude_ = 0.0;
-  double last_latitude_ = 0.0;
-  bool has_geographic_position_ = false;
 };
 
 int main(int argc, char * argv[])
