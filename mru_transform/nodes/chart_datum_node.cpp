@@ -216,7 +216,9 @@ private:
     auto geo = geodesy::toMsg(geodesy::ECEFPoint(ecef_point));
 
     // Query PROJ: (lon, lat, 0) → (lon, lat, height_above_mllw)
-    PJ_COORD input = proj_coord(geo.longitude, geo.latitude, 0.0, 0.0);
+    // PROJ C API expects radians for pipeline input
+    PJ_COORD input = proj_coord(
+      proj_torad(geo.longitude), proj_torad(geo.latitude), 0.0, 0.0);
     PJ_COORD output = proj_trans(proj_, PJ_FWD, input);
 
     if (output.xyz.z == HUGE_VAL ||
