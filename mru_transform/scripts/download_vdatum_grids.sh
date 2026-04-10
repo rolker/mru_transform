@@ -45,7 +45,7 @@ else
     else
         echo "Downloading VDatum regional grids (~849MB)..."
         mkdir -p "${CACHE_DIR}"
-        curl -L -o "${VDATUM_ZIP}" "${VDATUM_URL}"
+        curl -fL -o "${VDATUM_ZIP}" "${VDATUM_URL}"
         echo "Downloaded."
     fi
 
