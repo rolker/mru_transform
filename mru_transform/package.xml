@@ -23,6 +23,9 @@
   <depend>tf2_msgs</depend>
   <depend>tf2_ros</depend>
 
+  <depend>libproj-dev</depend>
+  <exec_depend>proj-data</exec_depend>
+
   <!-- The export tag contains other, unspecified, tags -->
   <export>
     <build_type>ament_cmake</build_type>
