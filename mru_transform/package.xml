@@ -24,7 +24,6 @@
   <depend>tf2_ros</depend>
 
   <depend>proj</depend>
-  <exec_depend>proj-data</exec_depend>
 
   <!-- The export tag contains other, unspecified, tags -->
   <export>
