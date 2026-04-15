@@ -1,10 +1,10 @@
-// chart_datum_node.cpp — Publishes the map → chart_datum TF transform
+// chart_datum_node.cpp — Publishes map → chart_datum TF transforms
 //
 // Uses PROJ to compute the static vertical offset between the WGS84
-// ellipsoid (map frame) and chart datum (MLLW) at the robot's current
-// position. The offset is position-dependent and recalculated
-// periodically. The transform is published at a faster rate using
-// the cached value.
+// ellipsoid (map frame) and tidal datums (MLLW, MHHW) at the robot's
+// current position. The offsets are position-dependent and recalculated
+// periodically. Transforms are published at a faster rate using
+// cached values.
 //
 // Position is obtained from the TF tree (earth → base_link → ECEF →
 // lat/lon via geodesy).
@@ -12,6 +12,7 @@
 // Requires:
 //   - PROJ geoid grid (e.g., us_noaa_g2018u0.tif) for ellipsoid → NAVD88
 //   - VDatum regional .gtx grids for NAVD88 → MLLW
+//   - VDatum regional .gtx grids for NAVD88 → MHHW (optional)
 
 #include <cmath>
 #include <filesystem>
@@ -23,6 +24,7 @@
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_lifecycle/lifecycle_node.hpp"
 #include "lifecycle_msgs/msg/state.hpp"
+#include "std_msgs/msg/float64.hpp"
 #include "tf2_ros/buffer.h"
 #include "tf2_ros/transform_broadcaster.h"
 #include "tf2_ros/transform_listener.h"
@@ -49,6 +51,9 @@ public:
   {
     declare_parameter("chart_datum_frame", chart_datum_frame_);
     get_parameter("chart_datum_frame", chart_datum_frame_);
+
+    declare_parameter("mhhw_frame", mhhw_frame_);
+    get_parameter("mhhw_frame", mhhw_frame_);
 
     declare_parameter("map_frame", map_frame_);
     get_parameter("map_frame", map_frame_);
@@ -87,6 +92,9 @@ public:
     tf_broadcaster_ =
       std::make_shared<tf2_ros::TransformBroadcaster>(*this);
 
+    mllw_pub_ = create_publisher<std_msgs::msg::Float64>("mllw_offset", 10);
+    mhhw_pub_ = create_publisher<std_msgs::msg::Float64>("mhhw_offset", 10);
+
     return LifecycleNode::on_configure(state);
   }
 
@@ -123,23 +131,51 @@ public:
   }
 
 private:
+  // Collect .gtx grid files matching a suffix (e.g., "_mllw")
+  std::string collect_grids(const std::string & suffix)
+  {
+    std::string grids;
+    for (const auto & entry :
+      fs::recursive_directory_iterator(vdatum_grid_dir_))
+    {
+      if (entry.path().extension() == ".gtx" &&
+        entry.path().stem().string().find(suffix) !=
+        std::string::npos)
+      {
+        if (!grids.empty()) {
+          grids += ",";
+        }
+        grids += entry.path().string();
+      }
+    }
+    return grids;
+  }
+
+  // Create a PROJ pipeline: ellipsoid → NAVD88 → target datum
+  PJ * create_pipeline(const std::string & datum_grids)
+  {
+    std::string pipeline =
+      "+proj=pipeline "
+      "+step +proj=vgridshift +grids=" + geoid_grid_path_ + " "
+      "+step +proj=vgridshift +grids=" + datum_grids;
+
+    PJ * pj = proj_create(proj_context_, pipeline.c_str());
+    if (!pj) {
+      RCLCPP_ERROR(
+        get_logger(), "Failed to create PROJ pipeline: %s",
+        proj_context_errno_string(
+          proj_context_, proj_context_errno(proj_context_)));
+    }
+    return pj;
+  }
+
   bool setup_proj()
   {
     std::string mllw_grids;
+    std::string mhhw_grids;
     try {
-      for (const auto & entry :
-        fs::recursive_directory_iterator(vdatum_grid_dir_))
-      {
-        if (entry.path().extension() == ".gtx" &&
-          entry.path().stem().string().find("_mllw") !=
-          std::string::npos)
-        {
-          if (!mllw_grids.empty()) {
-            mllw_grids += ",";
-          }
-          mllw_grids += entry.path().string();
-        }
-      }
+      mllw_grids = collect_grids("_mllw");
+      mhhw_grids = collect_grids("_mhhw");
     } catch (const fs::filesystem_error & e) {
       RCLCPP_ERROR(
         get_logger(), "Error scanning vdatum_grid_dir '%s': %s",
@@ -154,43 +190,68 @@ private:
       return false;
     }
 
-    RCLCPP_INFO(
-      get_logger(), "Found MLLW grids in %s",
+    RCLCPP_INFO(get_logger(), "Found MLLW grids in %s",
       vdatum_grid_dir_.c_str());
-
-    std::string pipeline =
-      "+proj=pipeline "
-      "+step +proj=vgridshift +grids=" + geoid_grid_path_ + " "
-      "+step +proj=vgridshift +grids=" + mllw_grids;
 
     proj_context_ = proj_context_create();
     proj_context_set_enable_network(proj_context_, false);
 
-    proj_ = proj_create(proj_context_, pipeline.c_str());
-    if (!proj_) {
-      RCLCPP_ERROR(
-        get_logger(), "Failed to create PROJ pipeline: %s",
-        proj_context_errno_string(
-          proj_context_, proj_context_errno(proj_context_)));
+    proj_mllw_ = create_pipeline(mllw_grids);
+    if (!proj_mllw_) {
       proj_context_destroy(proj_context_);
       proj_context_ = nullptr;
       return false;
     }
 
-    RCLCPP_INFO(get_logger(), "PROJ pipeline ready");
+    RCLCPP_INFO(get_logger(), "PROJ MLLW pipeline ready");
+
+    if (!mhhw_grids.empty()) {
+      proj_mhhw_ = create_pipeline(mhhw_grids);
+      if (proj_mhhw_) {
+        RCLCPP_INFO(get_logger(), "PROJ MHHW pipeline ready");
+      } else {
+        RCLCPP_WARN(get_logger(),
+          "Failed to create MHHW pipeline — MHHW frame will not be published");
+      }
+    } else {
+      RCLCPP_WARN(get_logger(),
+        "No *_mhhw.gtx files found — MHHW frame will not be published");
+    }
+
     return true;
   }
 
   void cleanup_proj()
   {
-    if (proj_) {
-      proj_destroy(proj_);
-      proj_ = nullptr;
+    if (proj_mllw_) {
+      proj_destroy(proj_mllw_);
+      proj_mllw_ = nullptr;
+    }
+    if (proj_mhhw_) {
+      proj_destroy(proj_mhhw_);
+      proj_mhhw_ = nullptr;
     }
     if (proj_context_) {
       proj_context_destroy(proj_context_);
       proj_context_ = nullptr;
     }
+  }
+
+  // Query a PROJ pipeline and return the negated Z (datum below ellipsoid)
+  bool query_datum(PJ * pipeline, double lon_rad, double lat_rad,
+    double & result_z)
+  {
+    PJ_COORD input = proj_coord(lon_rad, lat_rad, 0.0, 0.0);
+    PJ_COORD output = proj_trans(pipeline, PJ_FWD, input);
+
+    if (output.xyz.z == HUGE_VAL ||
+      std::isinf(output.xyz.z) || std::isnan(output.xyz.z))
+    {
+      return false;
+    }
+
+    result_z = -output.xyz.z;
+    return true;
   }
 
   void recalc_callback()
@@ -215,45 +276,82 @@ private:
 
     auto geo = geodesy::toMsg(geodesy::ECEFPoint(ecef_point));
 
-    // Query PROJ: (lon, lat, 0) → (lon, lat, height_above_mllw)
-    // PROJ C API expects radians for pipeline input
-    PJ_COORD input = proj_coord(
-      proj_torad(geo.longitude), proj_torad(geo.latitude), 0.0, 0.0);
-    PJ_COORD output = proj_trans(proj_, PJ_FWD, input);
+    double lon_rad = proj_torad(geo.longitude);
+    double lat_rad = proj_torad(geo.latitude);
 
-    if (output.xyz.z == HUGE_VAL ||
-      std::isinf(output.xyz.z) || std::isnan(output.xyz.z))
-    {
+    // MLLW (required)
+    double mllw_z;
+    if (!query_datum(proj_mllw_, lon_rad, lat_rad, mllw_z)) {
       RCLCPP_WARN_THROTTLE(
         get_logger(), *get_clock(), 30000,
-        "No VDatum coverage at (%.4f, %.4f)",
+        "No VDatum MLLW coverage at (%.4f, %.4f)",
         geo.latitude, geo.longitude);
       return;
     }
 
-    chart_datum_z_ = -output.xyz.z;
-    has_valid_offset_ = true;
+    chart_datum_z_ = mllw_z;
+    has_valid_mllw_ = true;
 
     RCLCPP_INFO_ONCE(
       get_logger(),
       "Chart datum at (%.4f, %.4f): %.3f m (MLLW below ellipsoid)",
       geo.latitude, geo.longitude, chart_datum_z_);
+
+    // MHHW (optional)
+    if (proj_mhhw_) {
+      double mhhw_z;
+      if (query_datum(proj_mhhw_, lon_rad, lat_rad, mhhw_z)) {
+        mhhw_z_ = mhhw_z;
+        has_valid_mhhw_ = true;
+
+        RCLCPP_INFO_ONCE(
+          get_logger(),
+          "MHHW at (%.4f, %.4f): %.3f m (below ellipsoid), "
+          "tidal range: %.3f m",
+          geo.latitude, geo.longitude, mhhw_z_,
+          mhhw_z_ - chart_datum_z_);
+      } else {
+        RCLCPP_WARN_THROTTLE(
+          get_logger(), *get_clock(), 30000,
+          "No VDatum MHHW coverage at (%.4f, %.4f)",
+          geo.latitude, geo.longitude);
+      }
+    }
   }
 
   void publish_callback()
   {
-    if (!has_valid_offset_) {
-      return;
+    auto stamp = now();
+
+    if (has_valid_mllw_) {
+      geometry_msgs::msg::TransformStamped transform;
+      transform.header.stamp = stamp;
+      transform.header.frame_id = map_frame_;
+      transform.child_frame_id = chart_datum_frame_;
+      transform.transform.translation.z = chart_datum_z_;
+      transform.transform.rotation.w = 1.0;
+
+      tf_broadcaster_->sendTransform(transform);
+
+      std_msgs::msg::Float64 msg;
+      msg.data = chart_datum_z_;
+      mllw_pub_->publish(msg);
     }
 
-    geometry_msgs::msg::TransformStamped transform;
-    transform.header.stamp = now();
-    transform.header.frame_id = map_frame_;
-    transform.child_frame_id = chart_datum_frame_;
-    transform.transform.translation.z = chart_datum_z_;
-    transform.transform.rotation.w = 1.0;
+    if (has_valid_mhhw_) {
+      geometry_msgs::msg::TransformStamped transform;
+      transform.header.stamp = stamp;
+      transform.header.frame_id = map_frame_;
+      transform.child_frame_id = mhhw_frame_;
+      transform.transform.translation.z = mhhw_z_;
+      transform.transform.rotation.w = 1.0;
 
-    tf_broadcaster_->sendTransform(transform);
+      tf_broadcaster_->sendTransform(transform);
+
+      std_msgs::msg::Float64 msg;
+      msg.data = mhhw_z_;
+      mhhw_pub_->publish(msg);
+    }
   }
 
   // TF
@@ -261,16 +359,22 @@ private:
   std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
   std::shared_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
 
+  // Debug publishers
+  rclcpp_lifecycle::LifecyclePublisher<std_msgs::msg::Float64>::SharedPtr mllw_pub_;
+  rclcpp_lifecycle::LifecyclePublisher<std_msgs::msg::Float64>::SharedPtr mhhw_pub_;
+
   // Timers
   rclcpp::TimerBase::SharedPtr publish_timer_;
   rclcpp::TimerBase::SharedPtr recalc_timer_;
 
   // PROJ state
   PJ_CONTEXT * proj_context_ = nullptr;
-  PJ * proj_ = nullptr;
+  PJ * proj_mllw_ = nullptr;
+  PJ * proj_mhhw_ = nullptr;
 
   // Parameters
   std::string chart_datum_frame_ = "chart_datum";
+  std::string mhhw_frame_ = "chart_datum_mhhw";
   std::string map_frame_ = "map";
   std::string base_frame_ = "base_link";
   std::string geoid_grid_path_;
@@ -280,7 +384,9 @@ private:
 
   // Cached state
   double chart_datum_z_ = 0.0;
-  bool has_valid_offset_ = false;
+  double mhhw_z_ = 0.0;
+  bool has_valid_mllw_ = false;
+  bool has_valid_mhhw_ = false;
 };
 
 int main(int argc, char * argv[])
