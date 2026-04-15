@@ -98,6 +98,11 @@ public:
     }
     double average = sum / odometry_buffer_.size();
 
+    // Always publish raw estimate for debugging, even if rejected below.
+    std_msgs::msg::Float64 tide_msg;
+    tide_msg.data = average;
+    tide_estimate_pub_->publish(tide_msg);
+
     // Check if the estimated tide is within a plausible range using
     // the chart datum (MLLW) and MHHW frames published by chart_datum_node.
     if (!chart_datum_frame_.empty() && !mhhw_frame_.empty()) {
@@ -113,10 +118,6 @@ public:
     transform.transform.rotation.w = 1.0;
 
     transform_broadcaster_->sendTransform(transform);
-
-    std_msgs::msg::Float64 tide_msg;
-    tide_msg.data = average;
-    tide_estimate_pub_->publish(tide_msg);
   }
 
 private:
