@@ -17,6 +17,7 @@ find_package(nav_msgs REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rclcpp_lifecycle REQUIRED)
 find_package(sensor_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
@@ -119,6 +120,7 @@ target_link_libraries(sea_surface_estimator
   rclcpp::rclcpp
   rclcpp_lifecycle::rclcpp_lifecycle
   ${nav_msgs_TARGETS}
+  ${std_msgs_TARGETS}
   tf2_ros::tf2_ros
 )
 
@@ -156,6 +158,7 @@ target_link_libraries(chart_datum_node
   rclcpp::rclcpp
   rclcpp_lifecycle::rclcpp_lifecycle
   ${geometry_msgs_TARGETS}
+  ${std_msgs_TARGETS}
   tf2::tf2
   tf2_ros::tf2_ros
   PkgConfig::PROJ
@@ -232,10 +235,11 @@ if(MLLW_COUNT EQUAL 0)
   endif()
 
   if(EXISTS "${VDATUM_ZIP_CACHE}")
-    message(STATUS "Extracting MLLW grids from VDatum archive...")
+    message(STATUS "Extracting MLLW and MHHW grids from VDatum archive...")
     file(MAKE_DIRECTORY "${VDATUM_EXTRACT_DIR}")
     execute_process(
-      COMMAND unzip -o "${VDATUM_ZIP_CACHE}" "*_mllw.gtx" "*.bnd" "*.met"
+      COMMAND unzip -o "${VDATUM_ZIP_CACHE}"
+        "*_mllw.gtx" "*_mhhw.gtx" "*.bnd" "*.met"
       WORKING_DIRECTORY "${VDATUM_EXTRACT_DIR}"
       RESULT_VARIABLE UNZIP_RESULT
     )
@@ -245,6 +249,20 @@ if(MLLW_COUNT EQUAL 0)
   endif()
 else()
   message(STATUS "VDatum MLLW grids cached: ${MLLW_COUNT} files")
+  # Extract MHHW grids if missing (upgrade from older cache)
+  file(GLOB MHHW_GRIDS_CHECK "${VDATUM_EXTRACT_DIR}/vdatum/*/*_mhhw.gtx")
+  list(LENGTH MHHW_GRIDS_CHECK MHHW_CHECK_COUNT)
+  if(MHHW_CHECK_COUNT EQUAL 0 AND EXISTS "${VDATUM_ZIP_CACHE}")
+    message(STATUS "Extracting MHHW grids from cached VDatum archive...")
+    execute_process(
+      COMMAND unzip -o "${VDATUM_ZIP_CACHE}" "*_mhhw.gtx"
+      WORKING_DIRECTORY "${VDATUM_EXTRACT_DIR}"
+      RESULT_VARIABLE UNZIP_MHHW_RESULT
+    )
+    if(NOT UNZIP_MHHW_RESULT EQUAL 0)
+      message(WARNING "Failed to extract MHHW grids (non-fatal)")
+    endif()
+  endif()
 endif()
 
 # Install grids to package share directory
@@ -255,9 +273,10 @@ if(EXISTS "${GEOID_CACHE}")
 endif()
 
 file(GLOB MLLW_GRIDS "${VDATUM_EXTRACT_DIR}/vdatum/*/*_mllw.gtx")
+file(GLOB MHHW_GRIDS "${VDATUM_EXTRACT_DIR}/vdatum/*/*_mhhw.gtx")
 file(GLOB VDATUM_BND "${VDATUM_EXTRACT_DIR}/vdatum/*/*.bnd")
 file(GLOB VDATUM_MET "${VDATUM_EXTRACT_DIR}/vdatum/*/*.met")
-foreach(GRID_FILE ${MLLW_GRIDS} ${VDATUM_BND} ${VDATUM_MET})
+foreach(GRID_FILE ${MLLW_GRIDS} ${MHHW_GRIDS} ${VDATUM_BND} ${VDATUM_MET})
   # Preserve the regional subdirectory structure
   file(RELATIVE_PATH REL_PATH "${VDATUM_EXTRACT_DIR}" "${GRID_FILE}")
   get_filename_component(REL_DIR "${REL_PATH}" DIRECTORY)
