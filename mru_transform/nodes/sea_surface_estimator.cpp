@@ -5,6 +5,7 @@
 #include "rclcpp_lifecycle/lifecycle_node.hpp"
 #include "lifecycle_msgs/msg/state.hpp"
 #include "nav_msgs/msg/odometry.hpp"
+#include "std_msgs/msg/float64.hpp"
 #include "tf2_ros/buffer.h"
 #include "tf2_ros/transform_broadcaster.h"
 #include "tf2_ros/transform_listener.h"
@@ -43,6 +44,10 @@ public:
 
     tf_buffer_ = std::make_shared<tf2_ros::Buffer>(get_clock());
     tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
+
+    auto latched_qos = rclcpp::QoS(1).transient_local();
+    tide_estimate_pub_ = create_publisher<std_msgs::msg::Float64>(
+      "tide_estimate", latched_qos);
 
     odometry_subscription_ = create_subscription<nav_msgs::msg::Odometry>(
       "odom", 10, std::bind(&SeaSurfaceEstimator::odometry_callback, this, std::placeholders::_1));
@@ -108,6 +113,10 @@ public:
     transform.transform.rotation.w = 1.0;
 
     transform_broadcaster_->sendTransform(transform);
+
+    std_msgs::msg::Float64 tide_msg;
+    tide_msg.data = average;
+    tide_estimate_pub_->publish(tide_msg);
   }
 
 private:
@@ -177,6 +186,7 @@ private:
   // transform listener.
 
   std::shared_ptr<tf2_ros::TransformBroadcaster> transform_broadcaster_;
+  rclcpp_lifecycle::LifecyclePublisher<std_msgs::msg::Float64>::SharedPtr tide_estimate_pub_;
   std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
   std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
 };

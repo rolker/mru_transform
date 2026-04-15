@@ -120,6 +120,7 @@ target_link_libraries(sea_surface_estimator
   rclcpp::rclcpp
   rclcpp_lifecycle::rclcpp_lifecycle
   ${nav_msgs_TARGETS}
+  ${std_msgs_TARGETS}
   tf2_ros::tf2_ros
 )
 

@@ -92,8 +92,9 @@ public:
     tf_broadcaster_ =
       std::make_shared<tf2_ros::TransformBroadcaster>(*this);
 
-    mllw_pub_ = create_publisher<std_msgs::msg::Float64>("mllw_offset", 10);
-    mhhw_pub_ = create_publisher<std_msgs::msg::Float64>("mhhw_offset", 10);
+    auto latched_qos = rclcpp::QoS(1).transient_local();
+    mllw_pub_ = create_publisher<std_msgs::msg::Float64>("mllw_offset", latched_qos);
+    mhhw_pub_ = create_publisher<std_msgs::msg::Float64>("mhhw_offset", latched_qos);
 
     return LifecycleNode::on_configure(state);
   }
