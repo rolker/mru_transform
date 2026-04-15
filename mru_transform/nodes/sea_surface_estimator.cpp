@@ -39,6 +39,13 @@ public:
 
     declare_parameter("tide_range_margin", tide_range_margin_);
     get_parameter("tide_range_margin", tide_range_margin_);
+    if (tide_range_margin_ < 0.0) {
+      RCLCPP_WARN(
+        get_logger(),
+        "Parameter 'tide_range_margin' is negative (%f); clamping to 0.0",
+        tide_range_margin_);
+      tide_range_margin_ = 0.0;
+    }
 
     transform_broadcaster_ = std::make_shared<tf2_ros::TransformBroadcaster>(*this);
 
