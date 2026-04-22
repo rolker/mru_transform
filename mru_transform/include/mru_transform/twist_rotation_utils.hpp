@@ -16,6 +16,16 @@ namespace mru_transform
 //
 // block_offset = 0: upper-left 3x3 (linear velocity block)
 // block_offset = 3: lower-right 3x3 (angular velocity block)
+//
+// Scope note: this helper handles diagonal blocks only.  The off-diagonal
+// 3x3 blocks at (0, 3) and (3, 0) — cross-covariance between linear and
+// angular velocity — are NOT rotated.  For current known sources
+// (mavros gps_vel, posmv, asv_sim) those cross-blocks are always zero
+// because linear and angular velocity come from independent sensors, so
+// in practice nothing is lost.  If a future source provides non-zero
+// cross-covariance (e.g., a fused INS reporting a full 6x6), this
+// helper's output will silently zero those blocks.  See
+// rolker/mru_transform#18 review discussion.
 inline void rotate_covariance_block_3x3(
   const std::array<double, 36> &covariance_in,
   const tf2::Matrix3x3 &R,
