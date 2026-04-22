@@ -52,15 +52,31 @@ void OrientationSensor::imuCallback(const sensor_msgs::msg::Imu::SharedPtr msg)
 
 void OrientationSensor::quaternionCallback(const geometry_msgs::msg::QuaternionStamped::SharedPtr msg)
 {
+  RCLCPP_WARN_ONCE(logger_,
+    "Orientation source '%s' is a QuaternionStamped — angular_velocity is "
+    "not available from this source type and will be published as zero. "
+    "Use a sensor_msgs/Imu source if angular velocity is needed downstream.",
+    topic_.c_str());
   latest_value_.header = msg->header;
   latest_value_.orientation = msg->quaternion;
+  // Explicitly clear angular_velocity to avoid publishing stale data from a
+  // prior IMU stream.
+  latest_value_.angular_velocity = geometry_msgs::msg::Vector3();
+  for (auto &c : latest_value_.angular_velocity_covariance) c = 0.0;
   call_callbacks_(latest_value_);
 }
 
 void OrientationSensor::geoPoseCallback(const geographic_msgs::msg::GeoPoseStamped::SharedPtr msg)
 {
+  RCLCPP_WARN_ONCE(logger_,
+    "Orientation source '%s' is a GeoPoseStamped — angular_velocity is "
+    "not available from this source type and will be published as zero. "
+    "Use a sensor_msgs/Imu source if angular velocity is needed downstream.",
+    topic_.c_str());
   latest_value_.header = msg->header;
   latest_value_.orientation = msg->pose.orientation;
+  latest_value_.angular_velocity = geometry_msgs::msg::Vector3();
+  for (auto &c : latest_value_.angular_velocity_covariance) c = 0.0;
   call_callbacks_(latest_value_);
 }
 
