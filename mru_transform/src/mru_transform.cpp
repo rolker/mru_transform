@@ -8,9 +8,11 @@
 #include <geometry_msgs/msg/transform_stamped.hpp>
 #include <std_srvs/srv/trigger.hpp> // Include the Trigger service header
 
+#include <tf2/LinearMath/Matrix3x3.h>
 #include <tf2/LinearMath/Quaternion.h>
-#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
+#include <tf2/LinearMath/Vector3.h>
 #include <tf2/utils.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 
 namespace mru_transform{
 
@@ -135,9 +137,19 @@ void MRUTransform::updateOrientation(const OrientationSensor::ValueType &orienta
   // IMU-sourced gyro is in orientation.header.frame_id (typically the IMU's
   // physical frame).  Rotate into body frame using the static sensor-to-base
   // transform.  No-op when frame_id already matches base_frame_.
-  if (!orientation.header.frame_id.empty() &&
-      orientation.header.frame_id != base_frame_)
-  {
+  //
+  // Failure-handling note: unlike updateVelocity (which drops the sample on
+  // TF lookup failure), this function still needs to run to broadcast the
+  // pose TFs above.  So on TF failure we publish zero angular velocity +
+  // zero angular covariance.  That is the honest representation when we
+  // cannot express the gyro in body frame: "no angular info available"
+  // rather than "angular info in an unknown frame".  The WARN_THROTTLE
+  // tells the operator to set up the missing static TF.
+  const bool same_frame =
+    orientation.header.frame_id.empty() ||
+    orientation.header.frame_id == base_frame_;
+
+  if (!same_frame) {
     try {
       auto tf = tf_buffer_->lookupTransform(
         base_frame_, orientation.header.frame_id, tf2::TimePointZero);
@@ -156,6 +168,8 @@ void MRUTransform::updateOrientation(const OrientationSensor::ValueType &orienta
       // Rotate angular-covariance sub-block.  The source (sensor_msgs/Imu)
       // stores angular_velocity_covariance as a flat 9-array; promote into a
       // 36-array with the angular block populated, rotate, then copy back.
+      // (Only the 3x3 angular-diagonal sub-block is rotated — see
+      //  twist_rotation_utils.hpp for the helper's scope.)
       std::array<double, 36> cov_in_6x6{};
       for (int i = 0; i < 3; ++i) {
         for (int j = 0; j < 3; ++j) {
@@ -167,15 +181,19 @@ void MRUTransform::updateOrientation(const OrientationSensor::ValueType &orienta
       return;
     } catch (const tf2::TransformException &e) {
       RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 5000,
-        "orientation: TF '%s' -> '%s' lookup failed: %s (passing angular through unrotated — set up static TF to eliminate this warning)",
+        "orientation: TF '%s' -> '%s' lookup failed: %s (publishing zero angular — set up a static TF to eliminate this warning)",
         orientation.header.frame_id.c_str(), base_frame_.c_str(), e.what());
-      // Fall through to the unrotated path below rather than drop, since the
-      // orientation stream also drives pose TF broadcasts that callers may
-      // depend on.
+      odom_.twist.twist.angular = geometry_msgs::msg::Vector3();
+      for (int i = 0; i < 3; ++i) {
+        for (int j = 0; j < 3; ++j) {
+          odom_.twist.covariance[(i + 3) * 6 + (j + 3)] = 0.0;
+        }
+      }
+      return;
     }
   }
 
-  // Same-frame (or post-exception fallback) path — copy angular directly.
+  // Same-frame path (frame_id is base_frame_ or empty) — copy angular directly.
   odom_.twist.twist.angular = orientation.angular_velocity;
   for (int i = 0; i < 3; ++i) {
     for (int j = 0; j < 3; ++j) {
@@ -221,7 +239,9 @@ void MRUTransform::updateVelocity(const VelocitySensor::ValueType &velocity)
   odom_.twist.twist.linear.y = v_out.y();
   odom_.twist.twist.linear.z = v_out.z();
 
-  // Rotate linear-covariance sub-block (upper-left 3x3)
+  // Rotate linear-covariance sub-block (upper-left 3x3).  Cross-covariance
+  // blocks between linear and angular are not touched — see the scope note
+  // in twist_rotation_utils.hpp.
   rotate_covariance_block_3x3(velocity.twist.covariance, R, 0,
                               odom_.twist.covariance);
 
