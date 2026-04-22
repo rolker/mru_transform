@@ -105,8 +105,8 @@ TEST(CovarianceRotation, Yaw90SwapsDiagonalXY)
 
 TEST(CovarianceRotation, PreservesTrace)
 {
-  // Trace is invariant under similarity transforms A^T Sigma A = A Sigma A^T
-  // when A is orthogonal (which rotation matrices are).
+  // Covariance rotation Sigma' = R Sigma R^T with orthogonal R (rotation
+  // matrices are orthogonal) preserves trace: tr(Sigma') = tr(Sigma).
   const std::array<double, 9> block{
     0.50, 0.15, 0.02,
     0.15, 0.40, 0.03,
