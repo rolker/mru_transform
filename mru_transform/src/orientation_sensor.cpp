@@ -43,10 +43,17 @@ bool OrientationSensor::subscribe(const std::vector<std::string>& topic_types)
 
 void OrientationSensor::imuCallback(const sensor_msgs::msg::Imu::SharedPtr msg)
 {
+  // Copy the full Imu payload, covariances included.  Without the covariance
+  // copies below, MRUTransform::updateOrientation would always rotate a
+  // default-zero angular_velocity_covariance and the published odom twist
+  // covariance would be meaningless regardless of what the IMU reports.
   latest_value_.header = msg->header;
   latest_value_.orientation = msg->orientation;
+  latest_value_.orientation_covariance = msg->orientation_covariance;
   latest_value_.angular_velocity = msg->angular_velocity;
+  latest_value_.angular_velocity_covariance = msg->angular_velocity_covariance;
   latest_value_.linear_acceleration = msg->linear_acceleration;
+  latest_value_.linear_acceleration_covariance = msg->linear_acceleration_covariance;
   call_callbacks_(latest_value_);
 }
 
