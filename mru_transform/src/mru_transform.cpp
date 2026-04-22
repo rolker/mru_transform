@@ -289,6 +289,12 @@ void MRUTransform::updateVelocity(const VelocitySensor::ValueType &velocity)
   odom.header.frame_id = odom_frame_;
   odom.header.stamp = velocity.header.stamp;
   odom.child_frame_id = base_frame_;
+  // Identity quaternion as the fallback pose orientation in case no
+  // orientation sample has been received yet.  The default-constructed
+  // quaternion is all-zero and invalid (non-unit); consumers that normalize
+  // or rotate by this field can misbehave.  Overwritten below when
+  // have_orientation_ is true.
+  odom.pose.pose.orientation.w = 1.0;
   odom.twist.twist.linear = linear_body;
 
   // Rotate linear-covariance sub-block (upper-left 3x3).  Cross-covariance
