@@ -1,4 +1,5 @@
 #include "mru_transform/mru_transform.hpp"
+#include "mru_transform/twist_rotation_utils.hpp"
 
 #include <sensor_msgs/msg/nav_sat_fix.hpp>
 #include <sensor_msgs/msg/imu.hpp>
@@ -129,7 +130,59 @@ void MRUTransform::updateOrientation(const OrientationSensor::ValueType &orienta
   broadcaster_->sendTransform(transforms);
 
   odom_.pose.pose.orientation = orientation.orientation;
+
+  // REP-105: angular velocity must be expressed in child_frame_id (body).
+  // IMU-sourced gyro is in orientation.header.frame_id (typically the IMU's
+  // physical frame).  Rotate into body frame using the static sensor-to-base
+  // transform.  No-op when frame_id already matches base_frame_.
+  if (!orientation.header.frame_id.empty() &&
+      orientation.header.frame_id != base_frame_)
+  {
+    try {
+      auto tf = tf_buffer_->lookupTransform(
+        base_frame_, orientation.header.frame_id, tf2::TimePointZero);
+      tf2::Quaternion q;
+      tf2::fromMsg(tf.transform.rotation, q);
+      tf2::Matrix3x3 R(q);
+
+      tf2::Vector3 w_in(orientation.angular_velocity.x,
+                        orientation.angular_velocity.y,
+                        orientation.angular_velocity.z);
+      tf2::Vector3 w_out = R * w_in;
+      odom_.twist.twist.angular.x = w_out.x();
+      odom_.twist.twist.angular.y = w_out.y();
+      odom_.twist.twist.angular.z = w_out.z();
+
+      // Rotate angular-covariance sub-block.  The source (sensor_msgs/Imu)
+      // stores angular_velocity_covariance as a flat 9-array; promote into a
+      // 36-array with the angular block populated, rotate, then copy back.
+      std::array<double, 36> cov_in_6x6{};
+      for (int i = 0; i < 3; ++i) {
+        for (int j = 0; j < 3; ++j) {
+          cov_in_6x6[(i + 3) * 6 + (j + 3)] =
+            orientation.angular_velocity_covariance[i * 3 + j];
+        }
+      }
+      rotate_covariance_block_3x3(cov_in_6x6, R, 3, odom_.twist.covariance);
+      return;
+    } catch (const tf2::TransformException &e) {
+      RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 5000,
+        "orientation: TF '%s' -> '%s' lookup failed: %s (passing angular through unrotated — set up static TF to eliminate this warning)",
+        orientation.header.frame_id.c_str(), base_frame_.c_str(), e.what());
+      // Fall through to the unrotated path below rather than drop, since the
+      // orientation stream also drives pose TF broadcasts that callers may
+      // depend on.
+    }
+  }
+
+  // Same-frame (or post-exception fallback) path — copy angular directly.
   odom_.twist.twist.angular = orientation.angular_velocity;
+  for (int i = 0; i < 3; ++i) {
+    for (int j = 0; j < 3; ++j) {
+      odom_.twist.covariance[(i + 3) * 6 + (j + 3)] =
+        orientation.angular_velocity_covariance[i * 3 + j];
+    }
+  }
 }
 
 void MRUTransform::updateVelocity(const VelocitySensor::ValueType &velocity)
@@ -138,7 +191,40 @@ void MRUTransform::updateVelocity(const VelocitySensor::ValueType &velocity)
   odom_.header.stamp = velocity.header.stamp;
   odom_.child_frame_id = base_frame_;
 
-  odom_.twist.twist.linear = velocity.twist.linear;
+  // REP-105: odom.twist must be expressed in child_frame_id (body).  Incoming
+  // velocity is in velocity.header.frame_id — typically a world frame (map,
+  // posmv_frame, mru_frame).  Rotate linear velocity + covariance into body
+  // before publishing.  No-op when frame_id already matches base_frame_.
+  geometry_msgs::msg::TransformStamped tf;
+  try {
+    tf = tf_buffer_->lookupTransform(
+      base_frame_, velocity.header.frame_id,
+      rclcpp::Time(velocity.header.stamp),
+      rclcpp::Duration::from_seconds(0.1));
+  } catch (const tf2::TransformException &e) {
+    RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 5000,
+      "velocity: TF '%s' -> '%s' lookup failed: %s (dropping sample)",
+      velocity.header.frame_id.c_str(), base_frame_.c_str(), e.what());
+    return;
+  }
+
+  tf2::Quaternion q;
+  tf2::fromMsg(tf.transform.rotation, q);
+  tf2::Matrix3x3 R(q);
+
+  // Rotate linear velocity
+  tf2::Vector3 v_in(velocity.twist.twist.linear.x,
+                    velocity.twist.twist.linear.y,
+                    velocity.twist.twist.linear.z);
+  tf2::Vector3 v_out = R * v_in;
+  odom_.twist.twist.linear.x = v_out.x();
+  odom_.twist.twist.linear.y = v_out.y();
+  odom_.twist.twist.linear.z = v_out.z();
+
+  // Rotate linear-covariance sub-block (upper-left 3x3)
+  rotate_covariance_block_3x3(velocity.twist.covariance, R, 0,
+                              odom_.twist.covariance);
+
   odom_pub_->publish(odom_);
 }
 
