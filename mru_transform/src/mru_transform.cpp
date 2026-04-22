@@ -231,7 +231,11 @@ void MRUTransform::updateVelocity(const VelocitySensor::ValueType &velocity)
   // REP-105: odom.twist must be expressed in child_frame_id (body).  Incoming
   // velocity is in velocity.header.frame_id — typically a world frame (map,
   // posmv_frame, mru_frame).  Rotate linear velocity + covariance into body
-  // before publishing.  No-op when frame_id already matches base_frame_.
+  // before publishing.  The TF lookup always runs:
+  //   - when frame_id == base_frame_, it returns identity (rotation is a
+  //     mathematical no-op, so values pass through unchanged)
+  //   - when frame_id is empty or cannot be resolved in the TF tree,
+  //     lookupTransform throws → we WARN_THROTTLE and drop this sample.
   geometry_msgs::msg::TransformStamped tf;
   try {
     tf = tf_buffer_->lookupTransform(
