@@ -81,7 +81,7 @@ Design agreed on the issue (comment 4292978963):
 | `mru_transform/src/orientation_sensor.cpp` | `RCLCPP_WARN_ONCE` in quaternion + geopose callbacks |
 | `mru_transform/CMakeLists.txt` | Enable gtest in `BUILD_TESTING` block, link test target |
 | `mru_transform/package.xml` | Add `ament_cmake_gtest` test dependency |
-| `mru_transform/test/test_frame_rotation.cpp` *(new)* | Unit tests for all four rotation scenarios |
+| `mru_transform/test/test_twist_rotation.cpp` *(new)* | Unit tests for all four rotation scenarios |
 
 ## Principles Self-Check
 
