@@ -8,7 +8,10 @@
 namespace mru_transform
 {
 
-class VelocitySensor: public SensorBase<geometry_msgs::msg::TwistStamped>
+// Uses TwistWithCovarianceStamped as its value type so covariance is
+// preserved end-to-end for REP-105-compliant downstream consumers.  The
+// plain TwistStamped subscription path fills a zero covariance block.
+class VelocitySensor: public SensorBase<geometry_msgs::msg::TwistWithCovarianceStamped>
 {
 public:
   VelocitySensor(NodeInterfaces node, std::string name, CallbackType callback);

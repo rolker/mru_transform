@@ -6,7 +6,7 @@ namespace mru_transform
 {
 
 template <>
-const std::string SensorBase<geometry_msgs::msg::TwistStamped>::sensor_type("velocity");
+const std::string SensorBase<geometry_msgs::msg::TwistWithCovarianceStamped>::sensor_type("velocity");
 
 VelocitySensor::VelocitySensor(NodeInterfaces node, std::string name, CallbackType callback)
     :BaseType(node, name, callback)
@@ -37,14 +37,18 @@ bool VelocitySensor::subscribe(const std::vector<std::string> &topic_types)
 
 void VelocitySensor::twistWithCovarianceCallback(const geometry_msgs::msg::TwistWithCovarianceStamped::SharedPtr msg)
 {
-  latest_value_.header = msg->header;
-  latest_value_.twist = msg->twist.twist;
+  latest_value_ = *msg;
   call_callbacks_(latest_value_);
 }
 
 void VelocitySensor::twistCallback(const geometry_msgs::msg::TwistStamped::SharedPtr msg)
 {
-  latest_value_ = *msg;
+  latest_value_.header = msg->header;
+  latest_value_.twist.twist = msg->twist;
+  // Covariance is unknown for plain TwistStamped — leave at default-constructed zeros.
+  for (auto &c : latest_value_.twist.covariance) {
+    c = 0.0;
+  }
   call_callbacks_(latest_value_);
 }
 

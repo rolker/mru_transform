@@ -292,6 +292,16 @@ endforeach()
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
   ament_lint_auto_find_test_dependencies()
+
+  find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(test_twist_rotation test/test_twist_rotation.cpp)
+  target_link_libraries(test_twist_rotation
+    ${PROJECT_NAME}
+    tf2::tf2
+  )
+  target_include_directories(test_twist_rotation PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/include"
+  )
 endif()
 
 ament_package()

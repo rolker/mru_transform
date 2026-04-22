@@ -1,4 +1,5 @@
 #include "mru_transform/mru_transform.hpp"
+#include "mru_transform/twist_rotation_utils.hpp"
 
 #include <sensor_msgs/msg/nav_sat_fix.hpp>
 #include <sensor_msgs/msg/imu.hpp>
@@ -7,9 +8,11 @@
 #include <geometry_msgs/msg/transform_stamped.hpp>
 #include <std_srvs/srv/trigger.hpp> // Include the Trigger service header
 
+#include <tf2/LinearMath/Matrix3x3.h>
 #include <tf2/LinearMath/Quaternion.h>
-#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
+#include <tf2/LinearMath/Vector3.h>
 #include <tf2/utils.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 
 namespace mru_transform{
 
@@ -94,14 +97,32 @@ void MRUTransform::updatePosition(PositionSensor::ValueType position)
   map_to_north_up_base_link.transform.translation.z = position_map.z-sensor_offset.z();
   transforms.push_back(map_to_north_up_base_link);
   broadcaster_->sendTransform(transforms);
-  odom_.pose.pose.position = position_map;
+
+  // Record latest position under state_mu_ for updateVelocity to compose
+  // into the published Odometry.  Keeps the three callbacks free of a
+  // shared nav_msgs::Odometry member and safe under a MultiThreadedExecutor.
+  {
+    std::lock_guard<std::mutex> lock(state_mu_);
+    latest_position_map_ = position_map;
+    have_position_ = true;
+  }
 }
 
 void MRUTransform::updateOrientation(const OrientationSensor::ValueType &orientation)
 {
-  tf2::Quaternion orientation_quat;
+  // Sanitize an all-zero (uninitialized) orientation quaternion to identity
+  // once, up front, so the same value flows to both the TF broadcast and the
+  // stored latest_orientation_ used in the published odom.  An all-zero quat
+  // is invalid (not unit length) and would confuse downstream consumers of
+  // odom.pose.pose.orientation.
+  geometry_msgs::msg::Quaternion orientation_q = orientation.orientation;
+  if (orientation_q.x == 0.0 && orientation_q.y == 0.0 &&
+      orientation_q.z == 0.0 && orientation_q.w == 0.0) {
+    orientation_q.w = 1.0;
+  }
 
-  tf2::fromMsg(orientation.orientation, orientation_quat);
+  tf2::Quaternion orientation_quat;
+  tf2::fromMsg(orientation_q, orientation_quat);
 
   double roll,pitch,yaw;
   tf2::getEulerYPR(orientation_quat, yaw, pitch, roll);
@@ -116,30 +137,190 @@ void MRUTransform::updateOrientation(const OrientationSensor::ValueType &orienta
 
   std::vector<geometry_msgs::msg::TransformStamped> transforms;
   transforms.push_back(north_up_base_link_to_level_base_link);
-  
+
   geometry_msgs::msg::TransformStamped north_up_base_link_to_base_link;
   north_up_base_link_to_base_link.header.stamp = orientation.header.stamp;
   north_up_base_link_to_base_link.header.frame_id = base_frame_+"_north_up";
   north_up_base_link_to_base_link.child_frame_id = base_frame_;
-  north_up_base_link_to_base_link.transform.rotation = orientation.orientation;
-  // if we have an uninitialized quat, lets set it to identity
-  if(orientation.orientation.x == 0.0 && orientation.orientation.y == 0.0 && orientation.orientation.z == 0 && orientation.orientation.w == 0.0)
-    north_up_base_link_to_base_link.transform.rotation.w = 1.0;
+  north_up_base_link_to_base_link.transform.rotation = orientation_q;
   transforms.push_back(north_up_base_link_to_base_link);
   broadcaster_->sendTransform(transforms);
 
-  odom_.pose.pose.orientation = orientation.orientation;
-  odom_.twist.twist.angular = orientation.angular_velocity;
+  // Compute angular velocity + covariance in base_frame_ locally, then
+  // commit to state under state_mu_.  Keeps this callback free of the
+  // shared Odometry mutation the pre-refactor code had.
+  //
+  // REP-105: angular velocity must be expressed in child_frame_id (body).
+  // IMU-sourced gyro is in orientation.header.frame_id (typically the IMU's
+  // physical frame).  Rotate into body frame using the static sensor-to-base
+  // transform.  No-op when frame_id already matches base_frame_.
+  //
+  // Failure-handling note: unlike updateVelocity (which drops the sample on
+  // TF lookup failure), this function still needs to run to broadcast the
+  // pose TFs above.  So on TF failure we publish zero angular velocity +
+  // zero angular covariance.  That is the honest representation when we
+  // cannot express the gyro in body frame: "no angular info available"
+  // rather than "angular info in an unknown frame".  The WARN_THROTTLE
+  // tells the operator to set up the missing static TF.
+  geometry_msgs::msg::Vector3 angular_body;
+  std::array<double, 9> angular_cov_body{};
+
+  // Empty frame_id is a publisher bug (not a signal that the data is already
+  // in base_frame_).  Treat it like a TF failure — align with updateVelocity
+  // which drops samples with empty/unresolvable frame_id.  Publishes zero
+  // angular rather than copying sensor-frame values through as body-frame.
+  const bool same_frame = orientation.header.frame_id == base_frame_;
+  const bool empty_frame = orientation.header.frame_id.empty();
+
+  bool have_angular = false;
+  if (empty_frame) {
+    RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 5000,
+      "orientation: empty header.frame_id; cannot express angular velocity "
+      "in '%s' (publishing zero angular — fix the IMU publisher's frame_id)",
+      base_frame_.c_str());
+    // angular_body + angular_cov_body stay zero-initialized.
+    have_angular = true;  // state still "received" — zeros are the honest answer.
+  } else if (!same_frame) {
+    try {
+      auto tf = tf_buffer_->lookupTransform(
+        base_frame_, orientation.header.frame_id, tf2::TimePointZero);
+      tf2::Quaternion q;
+      tf2::fromMsg(tf.transform.rotation, q);
+      tf2::Matrix3x3 R(q);
+
+      tf2::Vector3 w_in(orientation.angular_velocity.x,
+                        orientation.angular_velocity.y,
+                        orientation.angular_velocity.z);
+      tf2::Vector3 w_out = R * w_in;
+      angular_body.x = w_out.x();
+      angular_body.y = w_out.y();
+      angular_body.z = w_out.z();
+
+      // Rotate angular-covariance sub-block.  (Only the 3x3 angular-diagonal
+      // sub-block is rotated — see twist_rotation_utils.hpp for the helper's
+      // scope.)  We use a 36-array scratch because the helper operates on
+      // 6x6 twist covariance layouts; copy the rotated 3x3 back out.
+      std::array<double, 36> cov_in_6x6{};
+      std::array<double, 36> cov_out_6x6{};
+      for (int i = 0; i < 3; ++i) {
+        for (int j = 0; j < 3; ++j) {
+          cov_in_6x6[(i + 3) * 6 + (j + 3)] =
+            orientation.angular_velocity_covariance[i * 3 + j];
+        }
+      }
+      rotate_covariance_block_3x3(cov_in_6x6, R, 3, cov_out_6x6);
+      for (int i = 0; i < 3; ++i) {
+        for (int j = 0; j < 3; ++j) {
+          angular_cov_body[i * 3 + j] =
+            cov_out_6x6[(i + 3) * 6 + (j + 3)];
+        }
+      }
+      have_angular = true;
+    } catch (const tf2::TransformException &e) {
+      RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 5000,
+        "orientation: TF '%s' -> '%s' lookup failed: %s (publishing zero angular — set up a static TF to eliminate this warning)",
+        orientation.header.frame_id.c_str(), base_frame_.c_str(), e.what());
+      // angular_body + angular_cov_body stay zero-initialized.
+      have_angular = true;  // state still "received" — zeros are the honest answer.
+    }
+  } else {
+    // Same-frame path (frame_id explicitly == base_frame_) — copy directly.
+    angular_body = orientation.angular_velocity;
+    for (int i = 0; i < 9; ++i) {
+      angular_cov_body[i] = orientation.angular_velocity_covariance[i];
+    }
+    have_angular = true;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(state_mu_);
+    latest_orientation_ = orientation_q;
+    if (have_angular) {
+      latest_angular_body_ = angular_body;
+      latest_angular_cov_body_ = angular_cov_body;
+    }
+    have_orientation_ = true;
+  }
 }
 
 void MRUTransform::updateVelocity(const VelocitySensor::ValueType &velocity)
 {
-  odom_.header.frame_id = odom_frame_;
-  odom_.header.stamp = velocity.header.stamp;
-  odom_.child_frame_id = base_frame_;
+  // REP-105: odom.twist must be expressed in child_frame_id (body).  Incoming
+  // velocity is in velocity.header.frame_id — typically a world frame (map,
+  // posmv_frame, mru_frame).  Rotate linear velocity + covariance into body
+  // before publishing.  The TF lookup always runs:
+  //   - when frame_id == base_frame_, it returns identity (rotation is a
+  //     mathematical no-op, so values pass through unchanged)
+  //   - when frame_id is empty or cannot be resolved in the TF tree,
+  //     lookupTransform throws → we WARN_THROTTLE and drop this sample.
+  geometry_msgs::msg::TransformStamped tf;
+  try {
+    tf = tf_buffer_->lookupTransform(
+      base_frame_, velocity.header.frame_id,
+      rclcpp::Time(velocity.header.stamp),
+      rclcpp::Duration::from_seconds(0.1));
+  } catch (const tf2::TransformException &e) {
+    RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 5000,
+      "velocity: TF '%s' -> '%s' lookup failed: %s (dropping sample)",
+      velocity.header.frame_id.c_str(), base_frame_.c_str(), e.what());
+    return;
+  }
 
-  odom_.twist.twist.linear = velocity.twist.linear;
-  odom_pub_->publish(odom_);
+  tf2::Quaternion q;
+  tf2::fromMsg(tf.transform.rotation, q);
+  tf2::Matrix3x3 R(q);
+
+  // Rotate linear velocity into base_frame_.
+  tf2::Vector3 v_in(velocity.twist.twist.linear.x,
+                    velocity.twist.twist.linear.y,
+                    velocity.twist.twist.linear.z);
+  tf2::Vector3 v_out = R * v_in;
+  geometry_msgs::msg::Vector3 linear_body;
+  linear_body.x = v_out.x();
+  linear_body.y = v_out.y();
+  linear_body.z = v_out.z();
+
+  // Compose the full Odometry message locally from (a) this velocity's
+  // rotated linear + covariance and (b) a snapshot of the latest position /
+  // orientation / angular state contributed by the other two callbacks under
+  // state_mu_.  The snapshot is taken under the lock and then released — the
+  // publish runs outside the critical section.
+  nav_msgs::msg::Odometry odom;
+  odom.header.frame_id = odom_frame_;
+  odom.header.stamp = velocity.header.stamp;
+  odom.child_frame_id = base_frame_;
+  // Identity quaternion as the fallback pose orientation in case no
+  // orientation sample has been received yet.  The default-constructed
+  // quaternion is all-zero and invalid (non-unit); consumers that normalize
+  // or rotate by this field can misbehave.  Overwritten below when
+  // have_orientation_ is true.
+  odom.pose.pose.orientation.w = 1.0;
+  odom.twist.twist.linear = linear_body;
+
+  // Rotate linear-covariance sub-block (upper-left 3x3).  Cross-covariance
+  // blocks between linear and angular are not touched — see the scope note
+  // in twist_rotation_utils.hpp.
+  rotate_covariance_block_3x3(velocity.twist.covariance, R, 0,
+                              odom.twist.covariance);
+
+  {
+    std::lock_guard<std::mutex> lock(state_mu_);
+    if (have_position_) {
+      odom.pose.pose.position = latest_position_map_;
+    }
+    if (have_orientation_) {
+      odom.pose.pose.orientation = latest_orientation_;
+      odom.twist.twist.angular = latest_angular_body_;
+      for (int i = 0; i < 3; ++i) {
+        for (int j = 0; j < 3; ++j) {
+          odom.twist.covariance[(i + 3) * 6 + (j + 3)] =
+            latest_angular_cov_body_[i * 3 + j];
+        }
+      }
+    }
+  }
+
+  odom_pub_->publish(odom);
 }
 
 void MRUTransform::resetMapFrameService(const std_srvs::srv::Trigger::Request::SharedPtr request,
