@@ -110,9 +110,19 @@ void MRUTransform::updatePosition(PositionSensor::ValueType position)
 
 void MRUTransform::updateOrientation(const OrientationSensor::ValueType &orientation)
 {
-  tf2::Quaternion orientation_quat;
+  // Sanitize an all-zero (uninitialized) orientation quaternion to identity
+  // once, up front, so the same value flows to both the TF broadcast and the
+  // stored latest_orientation_ used in the published odom.  An all-zero quat
+  // is invalid (not unit length) and would confuse downstream consumers of
+  // odom.pose.pose.orientation.
+  geometry_msgs::msg::Quaternion orientation_q = orientation.orientation;
+  if (orientation_q.x == 0.0 && orientation_q.y == 0.0 &&
+      orientation_q.z == 0.0 && orientation_q.w == 0.0) {
+    orientation_q.w = 1.0;
+  }
 
-  tf2::fromMsg(orientation.orientation, orientation_quat);
+  tf2::Quaternion orientation_quat;
+  tf2::fromMsg(orientation_q, orientation_quat);
 
   double roll,pitch,yaw;
   tf2::getEulerYPR(orientation_quat, yaw, pitch, roll);
@@ -127,15 +137,12 @@ void MRUTransform::updateOrientation(const OrientationSensor::ValueType &orienta
 
   std::vector<geometry_msgs::msg::TransformStamped> transforms;
   transforms.push_back(north_up_base_link_to_level_base_link);
-  
+
   geometry_msgs::msg::TransformStamped north_up_base_link_to_base_link;
   north_up_base_link_to_base_link.header.stamp = orientation.header.stamp;
   north_up_base_link_to_base_link.header.frame_id = base_frame_+"_north_up";
   north_up_base_link_to_base_link.child_frame_id = base_frame_;
-  north_up_base_link_to_base_link.transform.rotation = orientation.orientation;
-  // if we have an uninitialized quat, lets set it to identity
-  if(orientation.orientation.x == 0.0 && orientation.orientation.y == 0.0 && orientation.orientation.z == 0 && orientation.orientation.w == 0.0)
-    north_up_base_link_to_base_link.transform.rotation.w = 1.0;
+  north_up_base_link_to_base_link.transform.rotation = orientation_q;
   transforms.push_back(north_up_base_link_to_base_link);
   broadcaster_->sendTransform(transforms);
 
@@ -217,7 +224,7 @@ void MRUTransform::updateOrientation(const OrientationSensor::ValueType &orienta
 
   {
     std::lock_guard<std::mutex> lock(state_mu_);
-    latest_orientation_ = orientation.orientation;
+    latest_orientation_ = orientation_q;
     if (have_angular) {
       latest_angular_body_ = angular_body;
       latest_angular_cov_body_ = angular_cov_body;
