@@ -1,15 +1,17 @@
-// Tests for REP-105 twist rotation math in mru_transform.
+// Tests for REP-105 twist covariance rotation in mru_transform.
 //
 // The production rotation in MRUTransform::updateVelocity /
 // updateOrientation goes:
 //   Sigma_body = R * Sigma_world * R^T
-//   v_body     = R * v_world
 // where R is the rotation extracted from a TF lookup
 // (base_frame ← header.frame_id).  These tests exercise the covariance
-// rotation helper and the vector rotation both for correctness on
-// synthetic inputs with known expected outputs and for the structural
-// invariants that any rotation must preserve (trace, determinant,
-// symmetry, magnitude).
+// rotation helper for correctness on synthetic inputs with known expected
+// outputs and for the structural invariants any orthogonal similarity
+// transform must preserve (trace, symmetry).
+//
+// Vector rotation itself (v_body = R * v_world) is exercised directly by
+// tf2::Matrix3x3::operator*(tf2::Vector3) — no mru_transform code of its
+// own — so it's not repeated here.
 
 #include <array>
 #include <cmath>
@@ -17,7 +19,6 @@
 #include <gtest/gtest.h>
 #include <tf2/LinearMath/Matrix3x3.h>
 #include <tf2/LinearMath/Quaternion.h>
-#include <tf2/LinearMath/Vector3.h>
 
 #include "mru_transform/twist_rotation_utils.hpp"
 
@@ -60,47 +61,6 @@ std::array<double, 9> extractBlock(
 }
 
 }  // namespace
-
-// -------------------------------------------------------------------------
-// Vector rotation sanity (uses bare tf2::Matrix3x3 so the test doubles as
-// documentation of what MRUTransform expects).
-// -------------------------------------------------------------------------
-
-TEST(VectorRotation, IdentityIsNoOp)
-{
-  tf2::Matrix3x3 I;
-  I.setIdentity();
-  tf2::Vector3 v(1.2, -3.4, 5.6);
-  tf2::Vector3 r = I * v;
-  EXPECT_NEAR(r.x(), 1.2, kEpsilon);
-  EXPECT_NEAR(r.y(), -3.4, kEpsilon);
-  EXPECT_NEAR(r.z(), 5.6, kEpsilon);
-}
-
-TEST(VectorRotation, Yaw90DegRotatesEastToNorth)
-{
-  // ENU convention: yaw=0 points East along body-X, yaw=+90deg rotates body-X
-  // to North.  Equivalently, a world vector pointing East expressed in a body
-  // that has been yawed +90deg should be -Y in body (the body sees it as
-  // starboard direction).
-  //
-  // Here we rotate the vector itself: R(yaw=+90deg) applied to East (+x) gives
-  // +North (+y).
-  auto R = yawRotation(M_PI / 2);
-  tf2::Vector3 east(1.0, 0.0, 0.0);
-  tf2::Vector3 north = R * east;
-  EXPECT_NEAR(north.x(), 0.0, 1e-12);
-  EXPECT_NEAR(north.y(), 1.0, 1e-12);
-  EXPECT_NEAR(north.z(), 0.0, 1e-12);
-}
-
-TEST(VectorRotation, PreservesMagnitude)
-{
-  auto R = yawRotation(1.23);  // arbitrary angle
-  tf2::Vector3 v(0.7, -1.9, 2.4);
-  tf2::Vector3 r = R * v;
-  EXPECT_NEAR(v.length(), r.length(), 1e-12);
-}
 
 // -------------------------------------------------------------------------
 // rotate_covariance_block_3x3 — helper from twist_rotation_utils.hpp
