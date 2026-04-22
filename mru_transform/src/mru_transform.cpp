@@ -165,12 +165,22 @@ void MRUTransform::updateOrientation(const OrientationSensor::ValueType &orienta
   geometry_msgs::msg::Vector3 angular_body;
   std::array<double, 9> angular_cov_body{};
 
-  const bool same_frame =
-    orientation.header.frame_id.empty() ||
-    orientation.header.frame_id == base_frame_;
+  // Empty frame_id is a publisher bug (not a signal that the data is already
+  // in base_frame_).  Treat it like a TF failure — align with updateVelocity
+  // which drops samples with empty/unresolvable frame_id.  Publishes zero
+  // angular rather than copying sensor-frame values through as body-frame.
+  const bool same_frame = orientation.header.frame_id == base_frame_;
+  const bool empty_frame = orientation.header.frame_id.empty();
 
   bool have_angular = false;
-  if (!same_frame) {
+  if (empty_frame) {
+    RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 5000,
+      "orientation: empty header.frame_id; cannot express angular velocity "
+      "in '%s' (publishing zero angular — fix the IMU publisher's frame_id)",
+      base_frame_.c_str());
+    // angular_body + angular_cov_body stay zero-initialized.
+    have_angular = true;  // state still "received" — zeros are the honest answer.
+  } else if (!same_frame) {
     try {
       auto tf = tf_buffer_->lookupTransform(
         base_frame_, orientation.header.frame_id, tf2::TimePointZero);
@@ -214,7 +224,7 @@ void MRUTransform::updateOrientation(const OrientationSensor::ValueType &orienta
       have_angular = true;  // state still "received" — zeros are the honest answer.
     }
   } else {
-    // Same-frame path (frame_id is base_frame_ or empty) — copy directly.
+    // Same-frame path (frame_id explicitly == base_frame_) — copy directly.
     angular_body = orientation.angular_velocity;
     for (int i = 0; i < 9; ++i) {
       angular_cov_body[i] = orientation.angular_velocity_covariance[i];
