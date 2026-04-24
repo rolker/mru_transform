@@ -256,9 +256,7 @@ void MRUTransform::updateVelocity(const VelocitySensor::ValueType &velocity)
   geometry_msgs::msg::TransformStamped tf;
   try {
     tf = tf_buffer_->lookupTransform(
-      base_frame_, velocity.header.frame_id,
-      rclcpp::Time(velocity.header.stamp),
-      rclcpp::Duration::from_seconds(0.1));
+      base_frame_, velocity.header.frame_id, tf2::TimePointZero);
   } catch (const tf2::TransformException &e) {
     RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 5000,
       "velocity: TF '%s' -> '%s' lookup failed: %s (dropping sample)",
