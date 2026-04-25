@@ -265,10 +265,14 @@ void MRUTransform::updateVelocity(const VelocitySensor::ValueType &velocity)
     tf = tf_buffer_->lookupTransform(
       base_frame_, velocity.header.frame_id,
       rclcpp::Time(velocity.header.stamp));
-  } catch (const tf2::TransformException &) {
+  } catch (const tf2::TransformException &stamped_lookup_error) {
     try {
       tf = tf_buffer_->lookupTransform(
         base_frame_, velocity.header.frame_id, tf2::TimePointZero);
+      RCLCPP_DEBUG_THROTTLE(node_->get_logger(), *node_->get_clock(), 5000,
+        "velocity: TF '%s' -> '%s' lookup at stamp failed (%s); using latest available transform",
+        velocity.header.frame_id.c_str(), base_frame_.c_str(),
+        stamped_lookup_error.what());
     } catch (const tf2::TransformException &e) {
       RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 5000,
         "velocity: TF '%s' -> '%s' lookup failed: %s (dropping sample)",
