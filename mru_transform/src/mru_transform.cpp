@@ -248,20 +248,33 @@ void MRUTransform::updateVelocity(const VelocitySensor::ValueType &velocity)
   // REP-105: odom.twist must be expressed in child_frame_id (body).  Incoming
   // velocity is in velocity.header.frame_id — typically a world frame (map,
   // posmv_frame, mru_frame).  Rotate linear velocity + covariance into body
-  // before publishing.  The TF lookup always runs:
-  //   - when frame_id == base_frame_, it returns identity (rotation is a
-  //     mathematical no-op, so values pass through unchanged)
-  //   - when frame_id is empty or cannot be resolved in the TF tree,
-  //     lookupTransform throws → we WARN_THROTTLE and drop this sample.
+  // before publishing.
+  //
+  // Prefer the transform sampled at velocity.header.stamp so the rotated
+  // twist stays temporally consistent with the published odom stamp,
+  // particularly when frame_id is a dynamic frame relative to base_frame_
+  // (e.g., map — see nodes/nav_sat_fix_to_velocity.cpp, which publishes
+  // velocity in map_frame_).  Both lookups are non-blocking: if the buffer
+  // does not yet hold a transform at the message stamp we fall back to the
+  // latest available (TimePointZero) rather than wait — a previous
+  // timeout-based lookup deadlocked the velocity callback in the field when
+  // the buffer fell behind.  If even TimePointZero fails (frame_id empty /
+  // not in TF tree), we WARN_THROTTLE and drop the sample.
   geometry_msgs::msg::TransformStamped tf;
   try {
     tf = tf_buffer_->lookupTransform(
-      base_frame_, velocity.header.frame_id, tf2::TimePointZero);
-  } catch (const tf2::TransformException &e) {
-    RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 5000,
-      "velocity: TF '%s' -> '%s' lookup failed: %s (dropping sample)",
-      velocity.header.frame_id.c_str(), base_frame_.c_str(), e.what());
-    return;
+      base_frame_, velocity.header.frame_id,
+      rclcpp::Time(velocity.header.stamp));
+  } catch (const tf2::TransformException &) {
+    try {
+      tf = tf_buffer_->lookupTransform(
+        base_frame_, velocity.header.frame_id, tf2::TimePointZero);
+    } catch (const tf2::TransformException &e) {
+      RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 5000,
+        "velocity: TF '%s' -> '%s' lookup failed: %s (dropping sample)",
+        velocity.header.frame_id.c_str(), base_frame_.c_str(), e.what());
+      return;
+    }
   }
 
   tf2::Quaternion q;
