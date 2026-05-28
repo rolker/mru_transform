@@ -15,6 +15,11 @@ PositionSensor::PositionSensor(NodeInterfaces node, std::string name, CallbackTy
 
 bool PositionSensor::subscribe(const std::vector<std::string> &topic_types)
 {
+  // Already subscribed — don't tear down and recreate a live subscription.
+  // Defense-in-depth for issue #23; SensorBase::subscribeCheck() also stops its
+  // timer once subscribed, so this is normally never re-entered.
+  if(subs_.navsat_fix || subs_.geo_point_stamped || subs_.geo_pose_stamped)
+    return true;
   for(const auto &topic_type: topic_types)
   {
     if(topic_type == "sensor_msgs/msg/NavSatFix")
