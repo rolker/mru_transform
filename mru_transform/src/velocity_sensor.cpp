@@ -15,6 +15,11 @@ VelocitySensor::VelocitySensor(NodeInterfaces node, std::string name, CallbackTy
 
 bool VelocitySensor::subscribe(const std::vector<std::string> &topic_types)
 {
+  // Already subscribed — don't tear down and recreate a live subscription.
+  // Defense-in-depth for issue #23; SensorBase::subscribeCheck() also stops its
+  // timer once subscribed, so this is normally never re-entered.
+  if(subs_.twist_with_covariance_stamped || subs_.twist_stamped)
+    return true;
   for(const auto &topic_type: topic_types)
   {
     if (topic_type == "geometry_msgs/msg/TwistWithCovarianceStamped")

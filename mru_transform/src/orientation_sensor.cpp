@@ -14,6 +14,11 @@ OrientationSensor::OrientationSensor(NodeInterfaces node, std::string name, Call
 
 bool OrientationSensor::subscribe(const std::vector<std::string>& topic_types)
 {
+  // Already subscribed — don't tear down and recreate a live subscription.
+  // Defense-in-depth for issue #23; SensorBase::subscribeCheck() also stops its
+  // timer once subscribed, so this is normally never re-entered.
+  if(subs_.imu || subs_.quaternion_stamped || subs_.geopose_stamped)
+    return true;
   for(const auto &topic_type: topic_types)
   {
     if (topic_type == "sensor_msgs/msg/Imu")

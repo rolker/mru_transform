@@ -302,6 +302,17 @@ if(BUILD_TESTING)
   target_include_directories(test_twist_rotation PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
   )
+
+  # Regression test for issue #23: subscribeCheck() subscribes once and stops.
+  ament_add_gtest(test_subscribe_once test/test_subscribe_once.cpp)
+  target_link_libraries(test_subscribe_once
+    ${PROJECT_NAME}
+    rclcpp::rclcpp
+    ${sensor_msgs_TARGETS}
+  )
+  target_include_directories(test_subscribe_once PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/include"
+  )
 endif()
 
 ament_package()

@@ -87,8 +87,10 @@ protected:
 
       RCLCPP_WARN_THROTTLE(logger_, *clock_,
           30 * 1000, msg.str().c_str()); // Throttle interval in milliseconds
+      return; // topic not advertised yet; the periodic timer keeps polling
     }
-    else if (!subscribe(topic_types)){
+
+    if (!subscribe(topic_types)){
       std::stringstream msg;
       msg <<"Unsupported " << sensor_type << " topic type for: " << topic_ << ", types: ";
       for(const auto &topic_type: topic_types)
@@ -97,11 +99,17 @@ protected:
         30 * 1000,  // Throttle interval in milliseconds
         msg.str()
       );
+      return; // unsupported type for now; the periodic timer keeps polling
     }
-    else
-      return; // subscribed, so bail out before setting a new timer
 
-    subscribe_check_timer_ = rclcpp::create_wall_timer(1000ms, [this]{this->subscribeCheck();}, nullptr, node_.get_node_base_interface().get(), node_.get_node_timers_interface().get());
+    // Subscribed: stop the periodic check so subscribe() is not re-run on every
+    // tick. rclcpp wall timers always repeat (there is no one-shot option like
+    // the ROS 1 timer this logic was originally written for); without this
+    // cancel the timer keeps firing and each tick recreates the subscription,
+    // churning it ~1 Hz and racing in-flight samples — which rmw_zenoh surfaces
+    // as "SubscriberCallback triggered over ..." ERRORs (issue #23).
+    if(subscribe_check_timer_)
+      subscribe_check_timer_->cancel();
   }
 
   void call_callbacks_(const ValueType& value)
