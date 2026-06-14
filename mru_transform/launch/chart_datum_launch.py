@@ -25,12 +25,23 @@ def generate_launch_description():
     vdatum_grid_dir_arg = DeclareLaunchArgument(
         'vdatum_grid_dir',
         default_value=os.path.join(_SHARE, 'data', 'vdatum'),
-        description='Directory containing VDatum *_mllw.gtx grids',
+        description='Directory containing VDatum *_mllw.gtx grids '
+                    '(empty disables VDatum)',
+    )
+
+    datum_config_path_arg = DeclareLaunchArgument(
+        'datum_config_path',
+        default_value='',
+        description='Path to a polygon→datum YAML config (see '
+                    'config/datum_polygons.example.yaml). Empty = none. '
+                    'Deployment-specific polygons belong in the platform/site '
+                    'config, not this package.',
     )
 
     return LaunchDescription([
         geoid_grid_arg,
         vdatum_grid_dir_arg,
+        datum_config_path_arg,
         LifecycleNode(
             package='mru_transform',
             executable='chart_datum_node',
@@ -42,7 +53,11 @@ def generate_launch_description():
             parameters=[{
                 'geoid_grid': LaunchConfiguration('geoid_grid'),
                 'vdatum_grid_dir': LaunchConfiguration('vdatum_grid_dir'),
+                'datum_config_path': LaunchConfiguration('datum_config_path'),
             }],
+            # The fixed-value override `lake_datum` (and `lake_datum_mhhw`) are
+            # node parameters; set them via a param file or `--ros-args -p`
+            # for a quick one-off (NaN/unset by default).
         ),
         LifecycleTransition(
             lifecycle_node_names=(
