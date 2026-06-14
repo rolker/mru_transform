@@ -51,3 +51,28 @@ issue: 25
 - [ ] (suggestion) Document/decide: a chart_datum-only entry (no mhhw) silently disables sea_surface_estimator's tide-plausibility bound (mhhw lookup throws → don't-filter) — `plan.md` step 4
 - [ ] (suggestion) Specify overlapping-polygon first-match semantics + antimeridian limitation of raw lat/lon ray-cast in schema docs — `plan.md` steps 1,8
 - [ ] (nit) `lake_datum` is a deployment-flavored name for a generic fixed-datum override — conscious choice per issue
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-06-14 (local)
+**By**: Claude Code Agent (Claude Opus 4.8 (1M context))
+**Verdict**: approved
+
+**Branch**: feature/issue-25 at `248e098`
+**Mode**: pre-push
+**Depth**: Deep (reason: ~820 lines, lifecycle node, safety-relevant datum, cross-layer consumers)
+**Must-fix**: 0 remaining (2 fixed) | **Suggestions**: 4 fixed, 1 open design decision, 2 cross-repo follow-ups
+
+### Findings
+- [x] (must-fix) publish_rate/recalc_interval ≤ 0 unvalidated → silent never-publish / pegged core — fixed in `chart_datum_node.cpp` on_configure
+- [x] (must-fix) datum_source_pub_ post-cleanup null-publish window (asymmetry vs mllw/mhhw pubs) — fixed by dropping the on_cleanup reset
+- [x] (suggestion) lake_datum ±Inf bypassed the NaN sentinel → could reach TF — fixed via std::isfinite + isinf warn
+- [x] (suggestion) load_datum_config threw raw YAML::Exception, breaking its std::runtime_error contract — fixed (wrap+rethrow)
+- [x] (suggestion) test gaps: collinear-outside / vertex-latitude / concave point_in_ring; malformed-vertex + non-numeric parse — added (21 gtests)
+- [x] (suggestion) plan README path nit (repo root, not mru_transform/) — fixed
+- [ ] (open — design decision) config-load failure returns CallbackReturn::FAILURE; reviewer argues degrade-to-empty + loud ERROR is more consistent with VDatum-optional / "works anywhere" (a config typo currently disables working VDatum too) — awaiting Roland's call
+- [ ] (follow-up, cross-repo) s57_layer keeps stale tide_offset_ when datum→none; new datum_source=="none" is the clean signal to clear it — file against s57_tools
+- [ ] (follow-up, same repo, separate node) sea_surface_estimator can't distinguish "no datum" from "MLLW present, MHHW missing"; could WARN when chart_datum resolves but mhhw doesn't
+
+### Governance / plan adherence
+All principles Pass (Capture-decisions: Watch — VDatum-now-optional lives in code/commit, repo has no ADR system). ADR-0008 compliant. Plan adherence: faithful; no scope creep; all 9 planned files changed.
