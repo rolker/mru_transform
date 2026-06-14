@@ -35,3 +35,19 @@ issue: 25
 - [ ] Config format: confirm adding yaml-cpp dep for the file-based polygon config (vs ROS nested params).
 - [ ] Frame naming: should the ellipsoid-default frame keep `chart_datum` or get a distinct name consumers can refuse? Align with #8.
 - [ ] `chart_layer` behavior on an ellipsoid-referenced datum (tolerate vs skip clearance) — confirms whether a cross-repo follow-up is needed.
+
+## Plan Review
+**Status**: complete
+**When**: 2026-06-13 (local)
+**By**: Claude Code Agent (Claude Opus 4.8 (1M context)) (in-context — author self-review)
+
+**Plan**: `.agent/work-plans/issue-25/plan.md` at `1584e96`
+**PR**: https://github.com/rolker/mru_transform/pull/26
+**Verdict**: approve-with-suggestions
+
+### Findings
+- [ ] (must-fix) Precedence logic lives in untested node code — widen pure `resolve()` to take the optional VDatum result + config + param + override flag and return final (source, datum), so acceptance item 5's matrix is unit-testable — `plan.md` steps 1,4,7
+- [ ] (suggestion) Add `install(DIRECTORY config ...)` so `datum_polygons.example.yaml` ships (config/ not installed today) — `plan.md` step 6
+- [ ] (suggestion) Document/decide: a chart_datum-only entry (no mhhw) silently disables sea_surface_estimator's tide-plausibility bound (mhhw lookup throws → don't-filter) — `plan.md` step 4
+- [ ] (suggestion) Specify overlapping-polygon first-match semantics + antimeridian limitation of raw lat/lon ray-cast in schema docs — `plan.md` steps 1,8
+- [ ] (nit) `lake_datum` is a deployment-flavored name for a generic fixed-datum override — conscious choice per issue
