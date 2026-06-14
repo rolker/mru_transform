@@ -89,6 +89,19 @@ public:
     declare_parameter("recalc_interval", recalc_interval_);
     get_parameter("recalc_interval", recalc_interval_);
 
+    // Non-positive timer periods would divide by zero (never publish) or peg a
+    // core (zero-period recalc) — both silent failures.
+    if (publish_rate_ <= 0.0) {
+      RCLCPP_ERROR(
+        get_logger(), "publish_rate must be > 0 (got %.3f)", publish_rate_);
+      return CallbackReturn::FAILURE;
+    }
+    if (recalc_interval_ <= 0.0) {
+      RCLCPP_ERROR(
+        get_logger(), "recalc_interval must be > 0 (got %.3f)", recalc_interval_);
+      return CallbackReturn::FAILURE;
+    }
+
     declare_parameter("datum_config_path", std::string(""));
     get_parameter("datum_config_path", datum_config_path_);
 
@@ -98,6 +111,20 @@ public:
     get_parameter("lake_datum", lake_datum_);
     declare_parameter("lake_datum_mhhw", kUnset);
     get_parameter("lake_datum_mhhw", lake_datum_mhhw_);
+
+    // NaN is the "unset" sentinel; an infinite value is an operator error, not
+    // a datum — normalize it away so it can't reach the TF tree.
+    if (std::isinf(lake_datum_)) {
+      RCLCPP_WARN(
+        get_logger(), "lake_datum is infinite — ignoring (treated as unset)");
+      lake_datum_ = kUnset;
+    }
+    if (std::isinf(lake_datum_mhhw_)) {
+      RCLCPP_WARN(
+        get_logger(),
+        "lake_datum_mhhw is infinite — ignoring (treated as unset)");
+      lake_datum_mhhw_ = kUnset;
+    }
 
     // VDatum is optional: enabled only when both grids are configured and the
     // PROJ pipeline sets up. Failure here is non-fatal — the config/param/absent
@@ -189,7 +216,6 @@ public:
     tf_buffer_.reset();
     tf_listener_.reset();
     tf_broadcaster_.reset();
-    datum_source_pub_.reset();
     return LifecycleNode::on_cleanup(state);
   }
 
@@ -389,10 +415,10 @@ private:
 
     // Resolve the datum via the pure precedence chain.
     auto vdatum = query_vdatum(geo.latitude, geo.longitude);
-    std::optional<double> lake = std::isnan(lake_datum_) ?
-      std::nullopt : std::optional<double>(lake_datum_);
-    std::optional<double> lake_mhhw = std::isnan(lake_datum_mhhw_) ?
-      std::nullopt : std::optional<double>(lake_datum_mhhw_);
+    std::optional<double> lake = std::isfinite(lake_datum_) ?
+      std::optional<double>(lake_datum_) : std::nullopt;
+    std::optional<double> lake_mhhw = std::isfinite(lake_datum_mhhw_) ?
+      std::optional<double>(lake_datum_mhhw_) : std::nullopt;
 
     auto result = mru_transform::resolve_datum(
       geo.latitude, geo.longitude, lake, lake_mhhw, vdatum, datum_entries_);

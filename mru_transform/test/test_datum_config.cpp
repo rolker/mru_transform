@@ -85,6 +85,36 @@ TEST(PointInRing, DegenerateRingIsNeverInside)
   EXPECT_FALSE(point_in_ring(0.5, 0.5, two));
 }
 
+TEST(PointInRing, CollinearButOutsideSegmentIsNotInside)
+{
+  // Point on the line of the bottom edge (lat=0) but beyond the segment's
+  // longitude range — must be rejected by the on-segment bounding-box check
+  // and not counted as on-boundary.
+  const auto ring = unitSquare();
+  EXPECT_FALSE(point_in_ring(0.0, 2.0, ring));
+  EXPECT_FALSE(point_in_ring(0.0, -1.0, ring));
+}
+
+TEST(PointInRing, VertexLatitudeDoesNotDoubleCount)
+{
+  // A horizontal ray at the latitude of the top vertices (lat=1.0) must not be
+  // mis-counted by the half-open ray-cast convention. A point well to the left
+  // at that latitude is outside; the top edge itself is boundary (inside).
+  const auto ring = unitSquare();
+  EXPECT_FALSE(point_in_ring(1.0, -1.0, ring));   // left of the ring, on top edge's lat
+  EXPECT_TRUE(point_in_ring(1.0, 0.5, ring));     // on the top edge → inside
+}
+
+TEST(PointInRing, ConcaveRingExcludesTheNotch)
+{
+  // An L-shaped (concave) ring: the notch must read as outside even though it
+  // is within the bounding box.
+  std::vector<LatLon> ell = {
+    {0.0, 0.0}, {0.0, 2.0}, {1.0, 2.0}, {1.0, 1.0}, {2.0, 1.0}, {2.0, 0.0}};
+  EXPECT_TRUE(point_in_ring(0.5, 0.5, ell));    // in the solid corner
+  EXPECT_FALSE(point_in_ring(1.5, 1.5, ell));   // in the removed notch
+}
+
 // ---- resolve_datum precedence -------------------------------------------
 
 TEST(ResolveDatum, ParamWinsOutright)
@@ -244,6 +274,39 @@ TEST(LoadDatumConfig, TooFewRingPointsThrows)
 TEST(LoadDatumConfig, MissingTopLevelKeyThrows)
 {
   const std::string path = writeTemp("some_other_key: 1\n");
+  EXPECT_THROW(load_datum_config(path), std::runtime_error);
+  std::remove(path.c_str());
+}
+
+TEST(LoadDatumConfig, MalformedRingVertexThrowsRuntimeError)
+{
+  // A ring vertex that is not a 2-element [lat, lon] sequence.
+  const std::string yaml =
+    "datum_polygons:\n"
+    "  - name: \"Bad Vertex\"\n"
+    "    chart_datum_z: -5.0\n"
+    "    ring:\n"
+    "      - [1.0, 1.0]\n"
+    "      - [1.0]\n"
+    "      - [2.0, 2.0]\n";
+  const std::string path = writeTemp(yaml);
+  EXPECT_THROW(load_datum_config(path), std::runtime_error);
+  std::remove(path.c_str());
+}
+
+TEST(LoadDatumConfig, NonNumericChartDatumZThrowsRuntimeError)
+{
+  // A yaml-cpp type-conversion failure must surface as std::runtime_error,
+  // per the function's documented contract (not a raw YAML::Exception).
+  const std::string yaml =
+    "datum_polygons:\n"
+    "  - name: \"Bad Z\"\n"
+    "    chart_datum_z: \"not-a-number\"\n"
+    "    ring:\n"
+    "      - [1.0, 1.0]\n"
+    "      - [1.0, 2.0]\n"
+    "      - [2.0, 2.0]\n";
+  const std::string path = writeTemp(yaml);
   EXPECT_THROW(load_datum_config(path), std::runtime_error);
   std::remove(path.c_str());
 }

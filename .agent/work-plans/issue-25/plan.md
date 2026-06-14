@@ -116,7 +116,7 @@ Within a pass, the **first** matching entry in file order wins (documented).
 | `test/test_datum_config.cpp` | New — gtest for ring/parse/resolve precedence matrix |
 | `mru_transform/CMakeLists.txt` | Build `datum_config` lib, link yaml-cpp, register test, `install(DIRECTORY config ...)` |
 | `mru_transform/package.xml` | Add `yaml-cpp` (or `yaml_cpp_vendor`) depend |
-| `mru_transform/README.md` | Document config/params/resolution order/absent-default |
+| `README.md` (repo root) | Document config/params/resolution order/absent-default |
 
 ## Principles Self-Check
 

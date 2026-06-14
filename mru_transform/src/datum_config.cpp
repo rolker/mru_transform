@@ -81,39 +81,48 @@ std::vector<DatumEntry> load_datum_config(const std::string & path)
   }
 
   std::vector<DatumEntry> entries;
-  for (const auto & node : polygons) {
-    DatumEntry entry;
-    entry.name = node["name"] ? node["name"].as<std::string>()
-                              : std::string("unnamed");
+  // Wrap the per-entry parse so yaml-cpp type-conversion failures (e.g. a
+  // non-numeric chart_datum_z or ring vertex) surface as std::runtime_error,
+  // matching this function's documented contract. Our own validation throws
+  // std::runtime_error directly and passes through untouched.
+  try {
+    for (const auto & node : polygons) {
+      DatumEntry entry;
+      entry.name = node["name"] ? node["name"].as<std::string>()
+                                : std::string("unnamed");
 
-    if (!node["chart_datum_z"]) {
-      throw std::runtime_error(
-        "Datum entry '" + entry.name + "' is missing 'chart_datum_z'");
-    }
-    entry.chart_datum_z = node["chart_datum_z"].as<double>();
+      if (!node["chart_datum_z"]) {
+        throw std::runtime_error(
+          "Datum entry '" + entry.name + "' is missing 'chart_datum_z'");
+      }
+      entry.chart_datum_z = node["chart_datum_z"].as<double>();
 
-    if (node["mhhw_z"]) {
-      entry.mhhw_z = node["mhhw_z"].as<double>();
-    }
+      if (node["mhhw_z"]) {
+        entry.mhhw_z = node["mhhw_z"].as<double>();
+      }
 
-    entry.override_vdatum = node["override"] && node["override"].as<bool>();
+      entry.override_vdatum = node["override"] && node["override"].as<bool>();
 
-    const YAML::Node ring = node["ring"];
-    if (!ring || !ring.IsSequence() || ring.size() < 3) {
-      throw std::runtime_error(
-        "Datum entry '" + entry.name +
-        "' needs a 'ring' of at least 3 [lat, lon] points");
-    }
-    for (const auto & pt : ring) {
-      if (!pt.IsSequence() || pt.size() != 2) {
+      const YAML::Node ring = node["ring"];
+      if (!ring || !ring.IsSequence() || ring.size() < 3) {
         throw std::runtime_error(
           "Datum entry '" + entry.name +
-          "' has a malformed ring vertex (expected [lat, lon])");
+          "' needs a 'ring' of at least 3 [lat, lon] points");
       }
-      entry.ring.push_back(LatLon{pt[0].as<double>(), pt[1].as<double>()});
-    }
+      for (const auto & pt : ring) {
+        if (!pt.IsSequence() || pt.size() != 2) {
+          throw std::runtime_error(
+            "Datum entry '" + entry.name +
+            "' has a malformed ring vertex (expected [lat, lon])");
+        }
+        entry.ring.push_back(LatLon{pt[0].as<double>(), pt[1].as<double>()});
+      }
 
-    entries.push_back(std::move(entry));
+      entries.push_back(std::move(entry));
+    }
+  } catch (const YAML::Exception & e) {
+    throw std::runtime_error(
+      "Malformed datum config '" + path + "': " + e.what());
   }
   return entries;
 }
