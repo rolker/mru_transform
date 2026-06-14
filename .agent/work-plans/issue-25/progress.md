@@ -70,9 +70,9 @@ issue: 25
 - [x] (suggestion) load_datum_config threw raw YAML::Exception, breaking its std::runtime_error contract — fixed (wrap+rethrow)
 - [x] (suggestion) test gaps: collinear-outside / vertex-latitude / concave point_in_ring; malformed-vertex + non-numeric parse — added (21 gtests)
 - [x] (suggestion) plan README path nit (repo root, not mru_transform/) — fixed
-- [ ] (open — design decision) config-load failure returns CallbackReturn::FAILURE; reviewer argues degrade-to-empty + loud ERROR is more consistent with VDatum-optional / "works anywhere" (a config typo currently disables working VDatum too) — awaiting Roland's call
-- [ ] (follow-up, cross-repo) s57_layer keeps stale tide_offset_ when datum→none; new datum_source=="none" is the clean signal to clear it — file against s57_tools
-- [ ] (follow-up, same repo, separate node) sea_surface_estimator can't distinguish "no datum" from "MLLW present, MHHW missing"; could WARN when chart_datum resolves but mhhw doesn't
+- [x] (design decision) config-load failure returns CallbackReturn::FAILURE — RESOLVED: keep FAILURE (Roland, 2026-06-14); operator set the path deliberately, so a broken file should stop the node loudly
+- [x] (follow-up, cross-repo) s57_layer stale tide_offset_ when datum→none → filed s57_tools#26
+- [x] (follow-up, same repo, separate node) sea_surface_estimator warn when chart_datum present but MHHW missing → filed mru_transform#27
 
 ### Governance / plan adherence
 All principles Pass (Capture-decisions: Watch — VDatum-now-optional lives in code/commit, repo has no ADR system). ADR-0008 compliant. Plan adherence: faithful; no scope creep; all 9 planned files changed.
