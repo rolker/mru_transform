@@ -1,0 +1,38 @@
+# Example polygon→datum configuration for chart_datum_node.
+#
+# Pass the path to this file via the `datum_config_path` parameter. Each entry
+# maps a geographic polygon to a vertical datum. The node looks up the boat's
+# current position and resolves the datum in this order:
+#
+#   1. lake_datum param (if set)              — wins everywhere
+#   2. entries with `override: true`  whose ring contains the point
+#   3. VDatum (NOAA grids), where it has coverage
+#   4. entries with `override: false` (default) whose ring contains the point
+#   5. nothing matches → chart_datum is NOT published (nav uses map_tide)
+#
+# Within a pass, the first matching entry in file order wins.
+#
+# Heights (chart_datum_z, mhhw_z) are signed metres in the SAME convention as
+# the published map→chart_datum transform: the datum's height relative to the
+# WGS84 ellipsoid (negative when the datum lies below the ellipsoid).
+#
+# NOTE: this is a SYNTHETIC example, not a surveyed value. Real, deployment-
+# specific polygons (e.g. Lake Massabesic) belong in your platform/site config
+# repo, not in this generic package.
+#
+# Rings are simple lat/lon polygons; a point on an edge counts as inside. Rings
+# crossing the ±180° antimeridian are not supported (fine for local areas).
+
+datum_polygons:
+  - name: "Example Lake (synthetic)"
+    # override: false        # (default) only used where VDatum has no coverage.
+                             # Set true to win over VDatum inside this ring.
+    chart_datum_z: -25.0     # SYNTHETIC placeholder — replace per deployment.
+    mhhw_z: -24.7            # optional; omit to leave the MHHW frame unpublished
+                             # (which leaves sea_surface_estimator's tide
+                             #  plausibility bound disabled there).
+    ring:                    # [latitude, longitude] vertices, degrees
+      - [43.000, -71.410]
+      - [43.000, -71.380]
+      - [42.980, -71.380]
+      - [42.980, -71.410]

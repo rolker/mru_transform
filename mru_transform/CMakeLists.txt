@@ -26,6 +26,29 @@ find_package(tf2_ros REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(PROJ REQUIRED IMPORTED_TARGET proj)
 
+find_package(yaml-cpp REQUIRED)
+# yaml-cpp 0.8 exports the namespaced target; older versions export a bare one.
+if(TARGET yaml-cpp::yaml-cpp)
+  set(YAML_CPP_TARGET yaml-cpp::yaml-cpp)
+else()
+  set(YAML_CPP_TARGET yaml-cpp)
+endif()
+
+
+############################
+## datum resolution core  ##
+############################
+
+# Pure, ROS-free polygon/param/VDatum precedence resolution. Shared by
+# chart_datum_node and its unit test so the precedence is unit-testable.
+add_library(datum_config SHARED src/datum_config.cpp)
+target_include_directories(datum_config PUBLIC
+  "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+  "$<INSTALL_INTERFACE:include/${PROJECT_NAME}>"
+)
+target_link_libraries(datum_config ${YAML_CPP_TARGET})
+install(TARGETS datum_config LIBRARY DESTINATION lib)
+
 
 #############
 ## library ##
@@ -155,6 +178,7 @@ add_executable(
 )
 
 target_link_libraries(chart_datum_node
+  datum_config
   rclcpp::rclcpp
   rclcpp_lifecycle::rclcpp_lifecycle
   ${geometry_msgs_TARGETS}
@@ -173,6 +197,10 @@ install(TARGETS chart_datum_node
 )
 
 install(DIRECTORY launch
+  DESTINATION share/${PROJECT_NAME}/
+)
+
+install(DIRECTORY config
   DESTINATION share/${PROJECT_NAME}/
 )
 
@@ -311,6 +339,15 @@ if(BUILD_TESTING)
     ${sensor_msgs_TARGETS}
   )
   target_include_directories(test_subscribe_once PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/include"
+  )
+
+  # Issue #25: datum resolution precedence + point-in-polygon + config parsing.
+  ament_add_gtest(test_datum_config test/test_datum_config.cpp)
+  target_link_libraries(test_datum_config
+    datum_config
+  )
+  target_include_directories(test_datum_config PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
   )
 endif()
