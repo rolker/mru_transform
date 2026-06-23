@@ -47,7 +47,16 @@ target_include_directories(datum_config PUBLIC
   "$<INSTALL_INTERFACE:include/${PROJECT_NAME}>"
 )
 target_link_libraries(datum_config ${YAML_CPP_TARGET})
-install(TARGETS datum_config LIBRARY DESTINATION lib)
+# Export datum_config so downstream packages (e.g. cube_bathymetry's chart-prior
+# importer, rolker/unh_marine_autonomy#163) can link resolve_datum/load_datum_config
+# via find_package(mru_transform). Shares the package export set; header is installed
+# by the install(DIRECTORY include/ ...) below. (#28)
+install(TARGETS datum_config
+  EXPORT export_${PROJECT_NAME}
+  LIBRARY DESTINATION lib
+  ARCHIVE DESTINATION lib
+  RUNTIME DESTINATION bin
+)
 
 
 #############
@@ -114,6 +123,7 @@ ament_export_dependencies(
   tf2_geometry_msgs
   tf2_msgs
   tf2_ros
+  yaml-cpp
 )
 
 #############
