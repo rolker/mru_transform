@@ -360,6 +360,16 @@ if(BUILD_TESTING)
   target_include_directories(test_datum_config PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
   )
+
+  # unh_echoboats_project11#339: strict priority-preference nav-source
+  # arbitration (highest-priority fresh source wins, not the newest sample).
+  ament_add_gtest(test_nav_source_selection test/test_nav_source_selection.cpp)
+  target_link_libraries(test_nav_source_selection
+    rclcpp::rclcpp
+  )
+  target_include_directories(test_nav_source_selection PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/include"
+  )
 endif()
 
 ament_package()

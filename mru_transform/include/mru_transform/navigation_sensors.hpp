@@ -4,6 +4,7 @@
 #include "mru_transform/position_sensor.hpp"
 #include "mru_transform/velocity_sensor.hpp"
 #include "mru_transform/orientation_sensor.hpp"
+#include "mru_transform/navigation_source_selection.hpp"
 #include "std_msgs/msg/string.hpp"
 #include "rclcpp/node_interfaces/node_interfaces.hpp"
 
@@ -40,29 +41,36 @@ private:
   /// @return True if a valid value was found
   template<typename T, typename SensorVectorT> bool updateLatest(T &value,  const SensorVectorT& sensors, const rclcpp::Time& now)
   {
-    for(auto s: sensors){
-      rclcpp::Time sensor_time = s->latest_value().header.stamp;
-      rclcpp::Time value_time = value.header.stamp;
-      auto msg_age = now - sensor_time;
-      if(msg_age < sensor_timeout_){
-        if(sensor_time > value_time){
-          value = s->latest_value();
-          if(active_sensor_pubs_.find(s->sensor_type) != active_sensor_pubs_.end())
-          {
-            std_msgs::msg::String active;
-            active.data = s->name();
-            active_sensor_pubs_[s->sensor_type]->publish(active);
-          }
-          return true;
-        }
-        else{
-          RCLCPP_WARN_STREAM_THROTTLE(logger_, *clock_, 1000, "skipping message with time " <<  (value_time - sensor_time).seconds() << " seconds behind last value from sensor " << s->name());
-        }
-      }else{
-        RCLCPP_WARN_STREAM_THROTTLE(logger_, *clock_, 5000, "sensor " << s->name() << "'s value is stale, age: " << msg_age.seconds() << " seconds");
-      }
+    // Strict priority-preference: the highest-priority *fresh* source owns the
+    // output; lower-priority sources are used only when higher-priority ones go
+    // stale (see selectNavigationSource / unh_echoboats_project11#339).
+    std::vector<rclcpp::Time> sensor_stamps;
+    sensor_stamps.reserve(sensors.size());
+    for(auto s: sensors)
+      sensor_stamps.push_back(s->latest_value().header.stamp);
+
+    // Diagnostics: warn (throttled) about stale sources we skip past before
+    // reaching the source that owns arbitration (the first fresh one).
+    for(std::size_t i = 0; i < sensors.size(); ++i){
+      auto msg_age = now - sensor_stamps[i];
+      if(msg_age < sensor_timeout_)
+        break;
+      RCLCPP_WARN_STREAM_THROTTLE(logger_, *clock_, 5000, "sensor " << sensors[i]->name() << "'s value is stale, age: " << msg_age.seconds() << " seconds");
     }
-    return false;
+
+    int idx = selectNavigationSource(sensor_stamps, value.header.stamp, now, sensor_timeout_);
+    if(idx < 0)
+      return false;
+
+    auto s = sensors[idx];
+    value = s->latest_value();
+    if(active_sensor_pubs_.find(s->sensor_type) != active_sensor_pubs_.end())
+    {
+      std_msgs::msg::String active;
+      active.data = s->name();
+      active_sensor_pubs_[s->sensor_type]->publish(active);
+    }
+    return true;
   }
 
   void positionCallback(const PositionSensor::ValueType &position);
