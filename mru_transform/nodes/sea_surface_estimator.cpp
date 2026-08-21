@@ -6,9 +6,12 @@
 #include "lifecycle_msgs/msg/state.hpp"
 #include "nav_msgs/msg/odometry.hpp"
 #include "std_msgs/msg/float64.hpp"
+#include "tf2/LinearMath/Vector3.h"
 #include "tf2_ros/buffer.h"
 #include "tf2_ros/transform_broadcaster.h"
 #include "tf2_ros/transform_listener.h"
+
+#include "mru_transform/water_line_offset.hpp"
 
 class SeaSurfaceEstimator : public rclcpp_lifecycle::LifecycleNode
 {
@@ -30,6 +33,16 @@ public:
 
     declare_parameter("maximum_buffer_duration", maximum_buffer_duration_);
     get_parameter("maximum_buffer_duration", maximum_buffer_duration_);
+
+    declare_parameter("water_line_frame", water_line_frame_);
+    get_parameter("water_line_frame", water_line_frame_);
+    if (water_line_frame_.empty()) {
+      RCLCPP_WARN(
+        get_logger(),
+        "Parameter 'water_line_frame' is unset: the sea surface will be "
+        "published at the vehicle frame, not the water line. Set it to the "
+        "URDF water-line frame to correct the offset.");
+    }
 
     declare_parameter("chart_datum_frame", chart_datum_frame_);
     get_parameter("chart_datum_frame", chart_datum_frame_);
@@ -98,10 +111,20 @@ public:
       return;
     }
 
+    // The buffered Z values are heights of the *vehicle* frame. The sea
+    // surface is the water line, so each sample is lifted by the water-line
+    // lever arm rotated into the parent frame by that sample's attitude.
+    const bool have_offset = update_water_line_lever_arm(msg->child_frame_id);
+
     double sum = 0.0;
     for (const auto & odometry : odometry_buffer_)
     {
-      sum += odometry.second->pose.pose.position.z;
+      double z = odometry.second->pose.pose.position.z;
+      if (have_offset) {
+        z += mru_transform::waterLineOffset(
+          water_line_lever_arm_, odometry.second->pose.pose.orientation);
+      }
+      sum += z;
     }
     double average = sum / odometry_buffer_.size();
 
@@ -128,6 +151,53 @@ public:
   }
 
 private:
+  // Cache the vehicle-frame-to-water-line lever arm. It comes from the URDF via
+  // a static transform, so one successful lookup holds for the life of the
+  // node; it is re-looked-up only if the vehicle frame changes.
+  //
+  // Returns false when no water-line frame is configured (in which case the
+  // estimator keeps its historical behaviour) or when the lookup fails.
+  bool update_water_line_lever_arm(const std::string & vehicle_frame)
+  {
+    if (water_line_frame_.empty()) {
+      return false;
+    }
+    if (have_water_line_lever_arm_ && vehicle_frame == water_line_source_frame_) {
+      return true;
+    }
+    try {
+      auto water_line_tf = tf_buffer_->lookupTransform(
+        vehicle_frame, water_line_frame_, tf2::TimePointZero);
+      water_line_lever_arm_ = tf2::Vector3(
+        water_line_tf.transform.translation.x,
+        water_line_tf.transform.translation.y,
+        water_line_tf.transform.translation.z);
+      water_line_source_frame_ = vehicle_frame;
+      have_water_line_lever_arm_ = true;
+      RCLCPP_INFO(
+        get_logger(),
+        "Water line '%s' is [%.3f, %.3f, %.3f] from '%s'; correcting the sea "
+        "surface estimate by that lever arm.",
+        water_line_frame_.c_str(), water_line_lever_arm_.x(),
+        water_line_lever_arm_.y(), water_line_lever_arm_.z(),
+        vehicle_frame.c_str());
+      return true;
+    } catch (const tf2::TransformException & e) {
+      // Configured but unavailable is a real misconfiguration, not a quiet
+      // degradation: say so on every throttle interval rather than letting the
+      // estimate sit silently at the vehicle frame. The first attempt happens
+      // only after minimum_buffer_duration_ of odometry, by which time a static
+      // transform from the URDF is long since available, so this does not fire
+      // spuriously at start-up.
+      RCLCPP_ERROR_THROTTLE(
+        get_logger(), *get_clock(), 10000,
+        "Cannot look up '%s' -> '%s' (%s); publishing the sea surface at the "
+        "vehicle frame with NO water-line correction applied.",
+        vehicle_frame.c_str(), water_line_frame_.c_str(), e.what());
+      return false;
+    }
+  }
+
   // Check if the estimated sea surface Z is outside the plausible
   // tidal range. Returns true if the estimate should be rejected.
   bool is_out_of_range(double estimated_z, const std::string & frame_id)
@@ -187,11 +257,15 @@ private:
   // (accounts for storm surge, extreme tides).
   double tide_range_margin_ = 2.0;
 
-  // TODO: figure out the transform between the frame id in the odom
-  // message nad the water line. Easy hack is to use a parameter for a
-  // vertical offset. It might be better to have the water line defined
-  // as a frame in the tf tree (via urdf presumably) and use a
-  // transform listener.
+  // Water line frame, from the URDF. Empty disables the correction and
+  // reproduces the pre-2026-08-21 behaviour of reporting the vehicle frame's
+  // height as the sea surface.
+  std::string water_line_frame_ = "";
+
+  // Cached vehicle-frame-to-water-line lever arm.
+  tf2::Vector3 water_line_lever_arm_{0.0, 0.0, 0.0};
+  std::string water_line_source_frame_;
+  bool have_water_line_lever_arm_ = false;
 
   std::shared_ptr<tf2_ros::TransformBroadcaster> transform_broadcaster_;
   rclcpp_lifecycle::LifecyclePublisher<std_msgs::msg::Float64>::SharedPtr tide_estimate_pub_;
