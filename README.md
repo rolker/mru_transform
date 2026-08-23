@@ -112,6 +112,72 @@ ships only a synthetic example.
 > plausibility bound needs both frames, so it stays disabled (no-op) for such an
 > entry — an acceptable degradation, but worth knowing.
 
+## sea_surface_estimator
+
+`sea_surface_estimator` estimates the water level by averaging the vehicle's
+height over a rolling window of odometry — over minutes, the boat's own motion
+averages out and what is left is the tide. It publishes the result two ways:
+
+- the **`map → map_tide`** TF transform (`sea_surface_frame`), the accepted
+  estimate that other nodes reference soundings and chart layers against;
+- the **`tide_estimate`** topic (`std_msgs/Float64`, latched/`transient_local`),
+  the *raw* estimate, published for debugging even when the plausibility bound
+  below rejects it.
+
+> Those two can disagree. When an estimate falls outside the plausible tidal
+> range, `tide_estimate` still carries it but `map_tide` is not broadcast — the
+> topic is the raw number, the frame is the accepted one. **Consumers that need
+> the tide the system stands behind must read the frame, not the topic.**
+
+### The water line, not the vehicle frame
+
+The averaged Z comes from `odom.pose.pose.position.z`, which is the height of
+the **vehicle** frame (the odometry's `child_frame_id`, typically `base_link`) —
+not of the water line. Published as-is it is low, or high, by whatever the
+vertical offset between the two happens to be: 0.030 m on BizzyBoat, and
+metre-scale on a platform whose origin sits at deck level.
+
+Set **`water_line_frame`** to the URDF frame at the water line and the node
+looks the vehicle→water-line lever arm up from TF and applies it. The lever arm
+is *rotated by each sample's attitude* before its vertical component is taken,
+so a large lever arm stays correct in a seaway.
+
+Behaviour depends on the parameter:
+
+| `water_line_frame` | Behaviour |
+|---|---|
+| unset (default) | No correction. `map_tide` is the **vehicle frame's** height, the node's pre-2026-08 behaviour. Logged as a warning at configure time so the omission is visible rather than assumed. |
+| set and resolvable | The lever arm is applied to every sample. |
+| set but **not** resolvable in TF | **Nothing is published** — no `map_tide`, no `tide_estimate` — and an error is logged on every throttle interval. A configured correction that cannot be applied is a misconfiguration, not a degraded mode: publishing (and latching) a tide known to be wrong by the whole lever arm would push that error into every sounding downstream. |
+
+The frame is expected to be **static** (it comes from the URDF). One lookup is
+cached and re-read every 10 s; if the lever arm moves, that is logged as a
+warning rather than silently changing the tide.
+
+Note that applying a metre-scale correction can move an estimate that used to
+sit inside the plausible tidal range outside it — check `tide_range_margin` and
+the `chart_datum` / `chart_datum_mhhw` heights if `map_tide` stops being
+published after configuring this parameter.
+
+### Parameters
+
+| Parameter | Default | Description |
+|---|---|---|
+| `sea_surface_frame` | `map_tide` | Child frame of the broadcast sea-surface transform. |
+| `water_line_frame` | `""` | URDF frame at the water line. Empty disables the correction (see above). |
+| `minimum_buffer_duration` | `5.0` | Seconds of odometry required before anything is published. |
+| `maximum_buffer_duration` | `30.0` | Seconds of odometry kept in the averaging window. |
+| `chart_datum_frame` | `chart_datum` | MLLW frame used for the plausibility bound. Empty disables the bound. |
+| `mhhw_frame` | `chart_datum_mhhw` | MHHW frame used for the plausibility bound. Empty disables the bound. |
+| `tide_range_margin` | `2.0` | Multiplier on the MLLW→MHHW range allowed beyond each end (storm surge, extreme tides). Negative values are clamped to 0. |
+
+The plausibility bound needs **both** datum frames; if either is missing (or
+either parameter is empty) it is disabled and every estimate is accepted.
+
+Odometry samples with a non-finite `position.z`, and non-finite attitudes, are
+rejected rather than averaged — a NaN would pass straight through the bound
+(every comparison against NaN is false) and latch on `tide_estimate`.
+
 ## Credits
 
 Originally Developed by: Roland Arsenault,  University of New Hampshire [Center for Coastal and Ocean Mapping](https://github.com/CCOMJHC)
