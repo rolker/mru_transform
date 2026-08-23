@@ -377,6 +377,20 @@ if(BUILD_TESTING)
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
   )
 
+  # Issue #32: the TF lookup behind the water-line correction -- argument
+  # order (the sign convention), caching, invalidation and the failure paths --
+  # exercised against a tf2_ros::Buffer populated with setTransform.
+  ament_add_gtest(test_water_line_lever_arm test/test_water_line_lever_arm.cpp)
+  target_link_libraries(test_water_line_lever_arm
+    ${geometry_msgs_TARGETS}
+    rclcpp::rclcpp
+    tf2::tf2
+    tf2_ros::tf2_ros
+  )
+  target_include_directories(test_water_line_lever_arm PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/include"
+  )
+
   # unh_echoboats_project11#339: strict priority-preference nav-source
   # arbitration (highest-priority fresh source wins, not the newest sample).
   ament_add_gtest(test_nav_source_selection test/test_nav_source_selection.cpp)
