@@ -11,6 +11,7 @@
 // attitude term that a scalar offset would have thrown away.
 
 #include <cmath>
+#include <limits>
 
 #include <gtest/gtest.h>
 #include <geometry_msgs/msg/quaternion.hpp>
@@ -89,12 +90,20 @@ TEST(WaterLineOffset, AttitudeTermIsNegligibleForBizzyButNotForALargeLeverArm)
 {
   const double roll = 5.0 * M_PI / 180.0;
 
+  // A purely vertical lever arm rolled by phi contributes z*cos(phi), so the
+  // error a scalar offset would make is exactly z*(1 - cos(phi)). Pin that
+  // closed form: one-sided bounds would also pass for the scalar
+  // implementation this test claims to distinguish.
+  const double shortening = 1.0 - std::cos(roll);
+
   const tf2::Vector3 small(0.0, 0.0, kBizzyWaterLine);
   const double small_error = kBizzyWaterLine - waterLineOffset(small, rpy(roll, 0, 0));
+  EXPECT_NEAR(small_error, kBizzyWaterLine * shortening, 1e-12);
   EXPECT_LT(small_error, 0.0002);  // ~0.1 mm: a scalar offset would do here
 
   const tf2::Vector3 large(0.0, 0.0, 1.5);
   const double large_error = 1.5 - waterLineOffset(large, rpy(roll, 0, 0));
+  EXPECT_NEAR(large_error, 1.5 * shortening, 1e-12);
   EXPECT_GT(large_error, 0.005);   // ~6 mm: it would not
 }
 
@@ -132,4 +141,40 @@ TEST(WaterLineOffset, MagnitudeIsBoundedByTheLeverArmLength)
                 lever.length() + 1e-9);
     }
   }
+}
+
+TEST(WaterLineOffset, NanQuaternionFallsBackToTheUnrotatedLeverArm)
+{
+  // A NaN attitude is not caught by a `length2() <= 0.0` guard -- every
+  // comparison against NaN is false -- and a NaN that got through would
+  // propagate into the tide that feeds soundings.
+  const tf2::Vector3 lever(0.0, 0.0, kBizzyWaterLine);
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  for (int component = 0; component < 4; ++component) {
+    auto q = rpy(0.1, 0.2, 0.3);
+    switch (component) {
+      case 0: q.x = nan; break;
+      case 1: q.y = nan; break;
+      case 2: q.z = nan; break;
+      default: q.w = nan; break;
+    }
+    const double z = waterLineOffset(lever, q);
+    EXPECT_FALSE(std::isnan(z)) << "component " << component;
+    EXPECT_NEAR(z, kBizzyWaterLine, 1e-12) << "component " << component;
+  }
+}
+
+TEST(WaterLineOffset, InfiniteQuaternionFallsBackToTheUnrotatedLeverArm)
+{
+  const tf2::Vector3 lever(0.0, 0.0, kBizzyWaterLine);
+  const double inf = std::numeric_limits<double>::infinity();
+  EXPECT_NEAR(waterLineOffset(lever, raw(inf, 0.0, 0.0, 1.0)), kBizzyWaterLine, 1e-12);
+  EXPECT_NEAR(waterLineOffset(lever, raw(0.0, 0.0, 0.0, -inf)), kBizzyWaterLine, 1e-12);
+
+  // Finite components whose squares overflow to infinity: length2() is inf, so
+  // normalised() would divide by infinity and rotate by a zero quaternion.
+  const double huge = 1e300;
+  const double z = waterLineOffset(lever, raw(0.0, 0.0, 0.0, huge));
+  EXPECT_TRUE(std::isfinite(z));
+  EXPECT_NEAR(z, kBizzyWaterLine, 1e-12);
 }
