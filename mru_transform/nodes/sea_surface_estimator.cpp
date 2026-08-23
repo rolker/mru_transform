@@ -11,6 +11,7 @@
 #include "tf2_ros/transform_broadcaster.h"
 #include "tf2_ros/transform_listener.h"
 
+#include "mru_transform/water_line_lever_arm.hpp"
 #include "mru_transform/water_line_offset.hpp"
 
 class SeaSurfaceEstimator : public rclcpp_lifecycle::LifecycleNode
@@ -36,6 +37,10 @@ public:
 
     declare_parameter("water_line_frame", water_line_frame_);
     get_parameter("water_line_frame", water_line_frame_);
+    // Registering the frame here also invalidates any lever arm cached under a
+    // previous configuration, so a cleanup -> configure with a different frame
+    // cannot keep applying the old one.
+    water_line_lever_arm_.setWaterLineFrame(water_line_frame_);
     if (water_line_frame_.empty()) {
       RCLCPP_WARN(
         get_logger(),
@@ -82,8 +87,17 @@ public:
 
   CallbackReturn on_cleanup(const rclcpp_lifecycle::State &state)
   {
-    tf_buffer_.reset();
+    // The listener holds a reference to the buffer and fills it from its own
+    // spin thread, so it must be torn down FIRST: releasing the buffer while
+    // the listener is still running is a use-after-free.
     tf_listener_.reset();
+    tf_buffer_.reset();
+
+    // Nothing cached here survives the configuration that produced it.
+    water_line_lever_arm_.reset();
+    have_lookup_attempt_ = false;
+    odometry_buffer_.clear();
+    buffered_child_frame_id_.clear();
     return LifecycleNode::on_cleanup(state);
   }
 
@@ -93,6 +107,32 @@ public:
     return;
 
     rclcpp::Time now = msg->header.stamp;
+
+    // A non-finite height is not an estimate of anything: buffering it would
+    // poison the average, and neither the plausibility bound nor any consumer
+    // downstream of `tide_estimate` can reject a NaN once it is in there.
+    if (!std::isfinite(msg->pose.pose.position.z)) {
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 10000,
+        "Odometry on '%s' carries a non-finite position.z; dropping the sample.",
+        msg->child_frame_id.c_str());
+      return;
+    }
+
+    // Every buffered sample is a height of the frame named by child_frame_id,
+    // and the water-line lever arm is specific to that frame. Mixing frames
+    // would average heights of different points and correct them all by one
+    // frame's lever arm, so a change starts a fresh window.
+    if (!odometry_buffer_.empty() && msg->child_frame_id != buffered_child_frame_id_) {
+      RCLCPP_INFO(
+        get_logger(),
+        "Odometry child_frame_id changed from '%s' to '%s'; restarting the sea "
+        "surface averaging window.",
+        buffered_child_frame_id_.c_str(), msg->child_frame_id.c_str());
+      odometry_buffer_.clear();
+    }
+    buffered_child_frame_id_ = msg->child_frame_id;
+
     odometry_buffer_[now] = msg;
 
     // Drop expired messages from the buffer.
@@ -116,19 +156,42 @@ public:
     // lever arm rotated into the parent frame by that sample's attitude.
     const bool have_offset = update_water_line_lever_arm(msg->child_frame_id);
 
+    // Configured but unresolved is not a degraded estimate, it is the wrong
+    // number: publishing here would put out — and, on a transient_local topic,
+    // LATCH for every late subscriber — a tide this node has just logged as
+    // wrong by the whole lever arm, and a TF that resolved mid-line would then
+    // step the entire rolling window by that lever arm. Publish nothing until
+    // the correction the operator asked for can actually be applied.
+    if (water_line_lever_arm_.enabled() && !have_offset) {
+      return;
+    }
+
     double sum = 0.0;
     for (const auto & odometry : odometry_buffer_)
     {
       double z = odometry.second->pose.pose.position.z;
       if (have_offset) {
         z += mru_transform::waterLineOffset(
-          water_line_lever_arm_, odometry.second->pose.pose.orientation);
+          water_line_lever_arm_.leverArm(), odometry.second->pose.pose.orientation);
       }
       sum += z;
     }
     double average = sum / odometry_buffer_.size();
 
-    // Always publish raw estimate for debugging, even if rejected below.
+    // Defensive: samples are finite on ingest and waterLineOffset is total, so
+    // this should be unreachable short of an overflow.
+    if (!std::isfinite(average)) {
+      RCLCPP_ERROR_THROTTLE(
+        get_logger(), *get_clock(), 10000,
+        "Sea surface estimate is not finite; publishing nothing.");
+      return;
+    }
+
+    // Always publish raw estimate for debugging, even if the plausibility
+    // bound below rejects it. NOTE: that means `tide_estimate` can carry a
+    // value that `map_tide` does not — the topic is the raw estimate, the
+    // frame is the accepted one. Consumers that need the accepted tide must
+    // read the frame, not the topic.
     std_msgs::msg::Float64 tide_msg;
     tide_msg.data = average;
     tide_estimate_pub_->publish(tide_msg);
@@ -151,50 +214,103 @@ public:
   }
 
 private:
-  // Cache the vehicle-frame-to-water-line lever arm. It comes from the URDF via
-  // a static transform, so one successful lookup holds for the life of the
-  // node; it is re-looked-up only if the vehicle frame changes.
+  // Resolve the vehicle-frame-to-water-line lever arm, from cache where
+  // possible. It comes from the URDF via a static transform, so one successful
+  // lookup normally holds for the life of the node; the cache is nevertheless
+  // refreshed every kLeverArmRefreshPeriod seconds so that a `water_line_frame`
+  // pointed at a frame that is NOT static shows up as a logged change rather
+  // than a value silently frozen at whatever TF held first. Failed lookups are
+  // retried no more often than kLeverArmRetryPeriod, so a misconfiguration
+  // costs one lookup per second and not one per odometry message.
   //
   // Returns false when no water-line frame is configured (in which case the
-  // estimator keeps its historical behaviour) or when the lookup fails.
+  // estimator keeps its historical behaviour) or when no lever arm is
+  // available; the caller publishes nothing in the latter case.
   bool update_water_line_lever_arm(const std::string & vehicle_frame)
   {
-    if (water_line_frame_.empty()) {
+    using Status = mru_transform::WaterLineLeverArm::Status;
+
+    if (!water_line_lever_arm_.enabled()) {
       return false;
     }
-    if (have_water_line_lever_arm_ && vehicle_frame == water_line_source_frame_) {
-      return true;
+
+    const bool cached = water_line_lever_arm_.isCachedFor(vehicle_frame);
+    const rclcpp::Time now = get_clock()->now();
+    if (have_lookup_attempt_) {
+      const double since = (now - last_lookup_attempt_).seconds();
+      const double period = cached ? kLeverArmRefreshPeriod : kLeverArmRetryPeriod;
+      // A negative interval means the clock jumped backwards (a bag replay, a
+      // sim time reset); treat that as due rather than waiting it out.
+      if (since >= 0.0 && since < period) {
+        return cached;
+      }
     }
-    try {
-      auto water_line_tf = tf_buffer_->lookupTransform(
-        vehicle_frame, water_line_frame_, tf2::TimePointZero);
-      water_line_lever_arm_ = tf2::Vector3(
-        water_line_tf.transform.translation.x,
-        water_line_tf.transform.translation.y,
-        water_line_tf.transform.translation.z);
-      water_line_source_frame_ = vehicle_frame;
-      have_water_line_lever_arm_ = true;
-      RCLCPP_INFO(
-        get_logger(),
-        "Water line '%s' is [%.3f, %.3f, %.3f] from '%s'; correcting the sea "
-        "surface estimate by that lever arm.",
-        water_line_frame_.c_str(), water_line_lever_arm_.x(),
-        water_line_lever_arm_.y(), water_line_lever_arm_.z(),
-        vehicle_frame.c_str());
-      return true;
-    } catch (const tf2::TransformException & e) {
-      // Configured but unavailable is a real misconfiguration, not a quiet
-      // degradation: say so on every throttle interval rather than letting the
-      // estimate sit silently at the vehicle frame. The first attempt happens
-      // only after minimum_buffer_duration_ of odometry, by which time a static
-      // transform from the URDF is long since available, so this does not fire
-      // spuriously at start-up.
-      RCLCPP_ERROR_THROTTLE(
-        get_logger(), *get_clock(), 10000,
-        "Cannot look up '%s' -> '%s' (%s); publishing the sea surface at the "
-        "vehicle frame with NO water-line correction applied.",
-        vehicle_frame.c_str(), water_line_frame_.c_str(), e.what());
-      return false;
+    last_lookup_attempt_ = now;
+    have_lookup_attempt_ = true;
+
+    const auto result = water_line_lever_arm_.update(*tf_buffer_, vehicle_frame, cached);
+
+    switch (result.status) {
+      case Status::Updated:
+        if (result.changed) {
+          RCLCPP_WARN(
+            get_logger(),
+            "Water line '%s' MOVED to [%.3f, %.3f, %.3f] from '%s'. This frame "
+            "is expected to be static (URDF); a moving one makes the tide "
+            "estimate step. Using the new value.",
+            water_line_frame_.c_str(), result.lever_arm.x(), result.lever_arm.y(),
+            result.lever_arm.z(), vehicle_frame.c_str());
+        } else if (!logged_lever_arm_) {
+          RCLCPP_INFO(
+            get_logger(),
+            "Water line '%s' is [%.3f, %.3f, %.3f] from '%s'; correcting the sea "
+            "surface estimate by that lever arm.",
+            water_line_frame_.c_str(), result.lever_arm.x(), result.lever_arm.y(),
+            result.lever_arm.z(), vehicle_frame.c_str());
+          logged_lever_arm_ = true;
+        }
+        return true;
+
+      case Status::Cached:
+        return true;
+
+      case Status::NoVehicleFrame:
+        // Point at the odometry publisher, not at TF: TF cannot be asked about
+        // a frame with no name.
+        RCLCPP_ERROR_THROTTLE(
+          get_logger(), *get_clock(), 10000,
+          "Odometry on '%s' has an empty child_frame_id, so there is no frame to "
+          "resolve the water line '%s' against. Fix the odometry publisher. No "
+          "sea surface is being published.",
+          odometry_subscription_->get_topic_name(), water_line_frame_.c_str());
+        return false;
+
+      case Status::LookupFailed:
+        if (water_line_lever_arm_.haveLeverArm()) {
+          // A refresh failed. The previously looked-up lever arm is static, so
+          // keeping it is right; say so rather than dropping the estimate.
+          RCLCPP_WARN_THROTTLE(
+            get_logger(), *get_clock(), 10000,
+            "Cannot refresh '%s' -> '%s' (%s); continuing with the lever arm "
+            "looked up earlier.",
+            water_line_frame_.c_str(), vehicle_frame.c_str(), result.error.c_str());
+          return true;
+        }
+        // Configured but unavailable is a real misconfiguration, not a quiet
+        // degradation: say so on every throttle interval. The first lookup
+        // happens only after minimum_buffer_duration_ of odometry, by which
+        // time a static transform from the URDF is long since available, so
+        // this does not fire spuriously at start-up.
+        RCLCPP_ERROR_THROTTLE(
+          get_logger(), *get_clock(), 10000,
+          "Cannot look up '%s' -> '%s' (%s); the water-line correction cannot be "
+          "applied, so NO sea surface is being published.",
+          water_line_frame_.c_str(), vehicle_frame.c_str(), result.error.c_str());
+        return false;
+
+      case Status::Disabled:
+      default:
+        return false;
     }
   }
 
@@ -262,10 +378,19 @@ private:
   // height as the sea surface.
   std::string water_line_frame_ = "";
 
-  // Cached vehicle-frame-to-water-line lever arm.
-  tf2::Vector3 water_line_lever_arm_{0.0, 0.0, 0.0};
-  std::string water_line_source_frame_;
-  bool have_water_line_lever_arm_ = false;
+  // Cached vehicle-frame-to-water-line lever arm, keyed on both frames.
+  mru_transform::WaterLineLeverArm water_line_lever_arm_;
+  bool logged_lever_arm_ = false;
+
+  // Seconds between re-reads of a resolved lever arm (staticness check) and
+  // between retries of an unresolved one.
+  static constexpr double kLeverArmRefreshPeriod = 10.0;
+  static constexpr double kLeverArmRetryPeriod = 1.0;
+  rclcpp::Time last_lookup_attempt_;
+  bool have_lookup_attempt_ = false;
+
+  // child_frame_id the buffered samples belong to.
+  std::string buffered_child_frame_id_;
 
   std::shared_ptr<tf2_ros::TransformBroadcaster> transform_broadcaster_;
   rclcpp_lifecycle::LifecyclePublisher<std_msgs::msg::Float64>::SharedPtr tide_estimate_pub_;
