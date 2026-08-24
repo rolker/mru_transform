@@ -22,10 +22,12 @@
 #include <lifecycle_msgs/msg/state.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/nav_sat_fix.hpp>
+#include <tf2_msgs/msg/tf_message.hpp>
 
 #include "mru_transform/nodes/chart_datum_node.hpp"
 #include "mru_transform/nodes/nav_sat_fix_to_velocity.hpp"
 #include "mru_transform/nodes/sea_surface_estimator.hpp"
+#include "mru_transform/nodes/tide_copier.hpp"
 
 namespace
 {
@@ -78,6 +80,20 @@ void spin_for(
   std::chrono::milliseconds duration)
 {
   spin_until(executor, [] {return false;}, duration);
+}
+
+tf2_msgs::msg::TFMessage make_tide_tf(
+  const std::string & parent, const std::string & child, double z)
+{
+  geometry_msgs::msg::TransformStamped transform;
+  transform.header.frame_id = parent;
+  transform.child_frame_id = child;
+  transform.transform.translation.z = z;
+  transform.transform.rotation.w = 1.0;
+
+  tf2_msgs::msg::TFMessage message;
+  message.transforms.push_back(transform);
+  return message;
 }
 
 sensor_msgs::msg::NavSatFix make_fix(double seconds, double latitude)
@@ -304,6 +320,115 @@ TEST_F(LifecycleReconfigureTest, NavSatFixToVelocityRespectsLifecycleState)
     spin_until(
       executor, [&] {return velocities.size() == 1;}, std::chrono::seconds(5)))
     << "the re-configured node stopped producing velocities";
+
+  node->deactivate();
+}
+
+TEST_F(LifecycleReconfigureTest, TideCopierReconfigures)
+{
+  expect_reconfigure_cycle(std::make_shared<TideCopier>());
+}
+
+TEST_F(LifecycleReconfigureTest, TideCopierKeepsOperatorParameter)
+{
+  auto node = std::make_shared<TideCopier>();
+
+  ASSERT_NO_THROW(node->configure());
+  node->set_parameter(
+    rclcpp::Parameter("output_map_tide_frame", std::string("survey/map_tide")));
+  ASSERT_NO_THROW(node->cleanup());
+  ASSERT_NO_THROW(node->configure());
+
+  EXPECT_EQ(
+    node->get_parameter("output_map_tide_frame").as_string(),
+    "survey/map_tide");
+}
+
+// tide_copier held its /tf publisher as an rclcpp::Publisher, whose
+// non-virtual publish() bypasses the activation gate, and never released its
+// /tf subscription on cleanup -- so a deactivated or cleaned-up node kept
+// copying map_tide into /tf. map_tide is the tide applied to every sounding,
+// so it has to follow the node's lifecycle state.
+//
+// The last phase doubles as the value-survival check with teeth: the frame the
+// operator set while the node was configured is the frame that comes out after
+// the cleanup -> configure cycle.
+TEST_F(LifecycleReconfigureTest, TideCopierRespectsLifecycleState)
+{
+  auto node = std::make_shared<TideCopier>();
+  auto peer = std::make_shared<rclcpp::Node>("tide_copier_peer");
+
+  auto tf_pub = peer->create_publisher<tf2_msgs::msg::TFMessage>("/tf", 10);
+  std::vector<geometry_msgs::msg::TransformStamped> copies;
+  auto tf_sub = peer->create_subscription<tf2_msgs::msg::TFMessage>(
+    "/tf", 10,
+    [&copies](tf2_msgs::msg::TFMessage::SharedPtr msg) {
+      for (const auto & transform : msg->transforms) {
+        // Ignore the input this test publishes; keep only the node's copies.
+        if (transform.header.frame_id != "in/map") {
+          copies.push_back(transform);
+        }
+      }
+    });
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(peer);
+  executor.add_node(node->get_node_base_interface());
+
+  ASSERT_NO_THROW(node->configure());
+  // The peer's own subscription matches its publisher, so the node's makes two.
+  ASSERT_TRUE(
+    spin_until(
+      executor, [&] {return tf_pub->get_subscription_count() >= 2;},
+      std::chrono::seconds(15)))
+    << "the node never subscribed to /tf";
+
+  tf_pub->publish(make_tide_tf("in/map", "in/map_tide", 1.5));
+  spin_for(executor, std::chrono::milliseconds(400));
+  EXPECT_TRUE(copies.empty())
+    << "a configured-but-inactive node copied the tide into /tf";
+
+  ASSERT_NO_THROW(node->activate());
+  tf_pub->publish(make_tide_tf("in/map", "in/map_tide", 1.5));
+  ASSERT_TRUE(
+    spin_until(
+      executor, [&] {return copies.size() == 1;}, std::chrono::seconds(5)))
+    << "an active node did not copy the tide";
+  EXPECT_EQ(copies.front().header.frame_id, "out/map");
+  EXPECT_EQ(copies.front().child_frame_id, "out/map_tide");
+  copies.clear();
+
+  ASSERT_NO_THROW(node->deactivate());
+  tf_pub->publish(make_tide_tf("in/map", "in/map_tide", 1.6));
+  spin_for(executor, std::chrono::milliseconds(400));
+  EXPECT_TRUE(copies.empty())
+    << "a deactivated node kept copying the tide into /tf";
+
+  // The reconfigure workflow this issue exists to enable, end to end: set the
+  // output frame on the running node, cycle, and the copy comes out renamed.
+  node->set_parameter(
+    rclcpp::Parameter("output_map_tide_frame", std::string("survey/map_tide")));
+  ASSERT_NO_THROW(node->cleanup());
+  tf_pub->publish(make_tide_tf("in/map", "in/map_tide", 1.7));
+  spin_for(executor, std::chrono::milliseconds(400));
+  EXPECT_TRUE(copies.empty())
+    << "a cleaned-up node kept copying the tide into /tf";
+
+  ASSERT_NO_THROW(node->configure());
+  ASSERT_NO_THROW(node->activate());
+  ASSERT_TRUE(
+    spin_until(
+      executor, [&] {return tf_pub->get_subscription_count() >= 2;},
+      std::chrono::seconds(15)))
+    << "the node never re-subscribed to /tf";
+
+  tf_pub->publish(make_tide_tf("in/map", "in/map_tide", 1.8));
+  ASSERT_TRUE(
+    spin_until(
+      executor, [&] {return copies.size() == 1;}, std::chrono::seconds(5)))
+    << "the re-configured node did not copy the tide";
+  EXPECT_EQ(copies.front().child_frame_id, "survey/map_tide")
+    << "the re-configure did not use the frame the operator set";
 
   node->deactivate();
 }
