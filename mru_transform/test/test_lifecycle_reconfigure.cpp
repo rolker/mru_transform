@@ -47,12 +47,23 @@ constexpr std::uint8_t kFinalized =
 // and `get_subscription_count()` waits, which an external subscriber can
 // satisfy vacuously. Two layers keep that from happening:
 //   * a dedicated ROS_DOMAIN_ID and localhost-only discovery, set on the test
-//     in CMakeLists.txt, so nothing outside this process is even discovered;
-//   * every node -- including the peer -- in this namespace, with the absolute
+//     in CMakeLists.txt, so unrelated traffic is not even discovered;
+//   * the node under test and its peer in this namespace, with the absolute
 //     /tf that tide_copier hardcodes remapped into it, so a domain collision
 //     still cannot cross-talk.
 // Topic names in this file are therefore RELATIVE on purpose; an absolute
 // "/tf" or "/fix" here would defeat both layers.
+//
+// Two limits, so nothing downstream over-reads this:
+//   * "every node" above means every node this fixture creates. It does NOT
+//     cover the internal node that the one-argument tf2_ros::TransformListener
+//     spins up inside sea_surface_estimator and chart_datum_node: that one gets
+//     default options, so it subscribes to the GLOBAL /tf and /tf_static and
+//     runs its own thread. Nothing in this file asserts on TF, so nothing
+//     flakes on it today -- but a future TF assertion cannot rely on the
+//     namespacing above.
+//   * the domain in CMakeLists.txt is hardcoded, so this does not isolate two
+//     concurrent runs of THIS test from each other (see the comment there).
 constexpr char kTestNamespace[] = "/mru_transform_lifecycle_test";
 
 rclcpp::NodeOptions isolated_options()
@@ -564,6 +575,15 @@ TEST_F(LifecycleReconfigureTest, NavSatFixToVelocityRespectsLifecycleState)
       executor, [&] {return fix_pub->get_subscription_count() > 0;},
       std::chrono::seconds(15)))
     << "the node never re-subscribed to fix";
+  // The subscription side matching is not enough: on_configure also re-created
+  // velocity_publisher_, and the single volatile-QoS velocity below is dropped
+  // if the peer's subscription has not matched it yet -- which would fail the
+  // assertion for a reason that has nothing to do with the code under test.
+  ASSERT_TRUE(
+    spin_until(
+      executor, [&] {return velocity_sub->get_publisher_count() > 0;},
+      std::chrono::seconds(15)))
+    << "the re-configured node's velocity publisher never matched the peer";
 
   fix_pub->publish(make_fix(102.0, 43.14));
   spin_for(executor, std::chrono::milliseconds(500));

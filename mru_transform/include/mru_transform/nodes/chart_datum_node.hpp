@@ -214,6 +214,11 @@ public:
     }
 
     tf_buffer_ = std::make_shared<tf2_ros::Buffer>(get_clock());
+    // One-argument form: the listener creates its OWN internal node with
+    // default options and spins it on its own thread, so it subscribes to the
+    // global /tf and /tf_static -- this node's namespace and remap rules do not
+    // apply to it. Usual TF-listener behaviour; called out because it is the
+    // one part of this node that a test cannot namespace.
     tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
     tf_broadcaster_ =
       std::make_shared<tf2_ros::TransformBroadcaster>(*this);
@@ -257,7 +262,11 @@ public:
     // timer outliving the PROJ context it calls into would be a use-after-free.
     // Resetting a timer does not wait for a callback already dispatched;
     // ordering the teardown is only sufficient because this node's main() uses
-    // a single-threaded executor.
+    // a single-threaded executor. (The one-argument TransformListener created
+    // in on_configure spins a thread of its own regardless, so that claim is
+    // about this node's own callbacks; that thread only fills tf_buffer_ and
+    // never enters the PROJ code, and the reset ordering below is what makes
+    // it safe.)
     publish_timer_.reset();
     recalc_timer_.reset();
 

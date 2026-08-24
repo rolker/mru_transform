@@ -145,6 +145,11 @@ public:
     transform_broadcaster_ = std::make_shared<tf2_ros::TransformBroadcaster>(*this);
 
     tf_buffer_ = std::make_shared<tf2_ros::Buffer>(get_clock());
+    // One-argument form: the listener creates its OWN internal node with
+    // default options and spins it on its own thread, so it subscribes to the
+    // global /tf and /tf_static -- this node's namespace and remap rules do not
+    // apply to it. Usual TF-listener behaviour; called out because it is the
+    // one part of this node that a test cannot namespace.
     tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
 
     auto latched_qos = rclcpp::QoS(1).transient_local();
@@ -171,7 +176,11 @@ public:
     // multi-threaded executor a callback already dispatched could still be
     // running here. Every main() in this package uses a single-threaded
     // executor; the installed headers now take NodeOptions, so a composed
-    // future user has to keep to that or add real synchronization.
+    // future user has to keep to that or add real synchronization. (The
+    // one-argument TransformListener does spin a thread of its own regardless
+    // of the executor, so "single-threaded" is a claim about this node's own
+    // callbacks; that thread only fills the buffer, and the reset ordering
+    // below is what makes it safe.)
     odometry_subscription_.reset();
     tide_estimate_pub_.reset();
     transform_broadcaster_.reset();

@@ -432,9 +432,14 @@ if(BUILD_TESTING)
   # Issue #34: configure -> cleanup -> configure must not throw
   # ParameterAlreadyDeclaredException, and must keep a parameter value the
   # operator set on the running node.
-  ament_add_gtest(test_lifecycle_reconfigure test/test_lifecycle_reconfigure.cpp)
+  # The default 60 s ctest TIMEOUT is too tight now: the live cases budget
+  # roughly eight 15 s endpoint-discovery waits, and a two-case failure alone
+  # has been measured at 30 s. Without the headroom a regression surfaces as an
+  # opaque ctest timeout instead of a named gtest failure.
+  ament_add_gtest(test_lifecycle_reconfigure test/test_lifecycle_reconfigure.cpp
+    TIMEOUT 180)
   target_link_libraries(test_lifecycle_reconfigure
-  ${lifecycle_msgs_TARGETS}
+    ${lifecycle_msgs_TARGETS}
     datum_config
     rclcpp::rclcpp
     rclcpp_lifecycle::rclcpp_lifecycle
@@ -457,10 +462,21 @@ if(BUILD_TESTING)
   # The live pub/sub cases in this test prove negatives ("an inactive node
   # published nothing"), so unrelated ROS traffic on the machine could break
   # them -- or satisfy a subscription-count wait vacuously. Give the test its
-  # own domain and keep discovery on this host. (The test also namespaces every
-  # node it creates, so a domain collision still cannot cross-talk.)
+  # own domain and keep discovery on this host; the test additionally namespaces
+  # the nodes it creates itself, so a domain collision still cannot cross-talk.
+  #
+  # Scope of that claim, precisely: this protects against UNRELATED traffic. It
+  # does NOT make two concurrent runs of THIS test independent -- the domain is
+  # hardcoded and LOCALHOST discovery explicitly permits same-host peers, so two
+  # agent worktrees running `colcon test` at the same time share both the domain
+  # and the namespace, and a subscription-count wait can then be satisfied by
+  # the other process. Nor does it apply at all when the gtest binary is run
+  # directly, a normal debugging step; export the same variables by hand.
+  # Discovery-server / static-peer settings inherited from the environment could
+  # otherwise re-join the test to a wider graph regardless of the range, so they
+  # are blanked here too.
   set_tests_properties(test_lifecycle_reconfigure PROPERTIES
-    ENVIRONMENT "ROS_DOMAIN_ID=89;ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST;ROS_LOCALHOST_ONLY=0"
+    ENVIRONMENT "ROS_DOMAIN_ID=89;ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST;ROS_DISCOVERY_SERVER=;ROS_STATIC_PEERS=;FASTRTPS_DEFAULT_PROFILES_FILE=;CYCLONEDDS_URI="
   )
 
   # unh_echoboats_project11#339: strict priority-preference nav-source
