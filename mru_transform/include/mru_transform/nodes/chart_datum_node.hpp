@@ -530,6 +530,19 @@ private:
 
   void publish_callback()
   {
+    // `shutdown` from `active` runs on_shutdown ONLY -- it skips on_deactivate
+    // and on_cleanup, and no node here overrides on_shutdown -- so both timers
+    // survive into `finalized` and this callback keeps firing. tf_broadcaster_
+    // is a plain TransformBroadcaster with no activation gate, and
+    // LifecyclePublisher's gate is a non-virtual hide that publish() bypasses,
+    // so nothing but this check stops a finalized node from putting
+    // map -> chart_datum on /tf. That is the frame every sounding is reduced
+    // against: it must follow this node's lifecycle state. The same check also
+    // covers `errorprocessing`, which is not ACTIVE either. (#34)
+    if (get_current_state().id() != lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE) {
+      return;
+    }
+
     auto stamp = now();
 
     if (has_valid_mllw_) {

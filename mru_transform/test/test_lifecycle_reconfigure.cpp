@@ -39,6 +39,8 @@ constexpr std::uint8_t kUnconfigured =
   lifecycle_msgs::msg::State::PRIMARY_STATE_UNCONFIGURED;
 constexpr std::uint8_t kInactive =
   lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE;
+constexpr std::uint8_t kFinalized =
+  lifecycle_msgs::msg::State::PRIMARY_STATE_FINALIZED;
 
 // Isolation. The live pub/sub cases below prove NEGATIVES -- "an inactive node
 // published nothing" -- which any unrelated traffic on the machine can break,
@@ -389,6 +391,60 @@ TEST_F(LifecycleReconfigureTest, ChartDatumNodeCleanupReleasesItsPublishers)
       executor, [&] {return publisher_counts() == 0;}, std::chrono::seconds(15)))
     << "on_cleanup did not release the latched publishers (" << publisher_counts()
     << " still up) -- a cleaned-up node still latches a datum for late subscribers";
+}
+
+// `shutdown` from `active` is the transition the other cases never take, and
+// it is the one with no teardown behind it: it runs on_shutdown ONLY -- not
+// on_deactivate, not on_cleanup -- and no node in this package overrides
+// on_shutdown. chart_datum_node's timers are therefore still armed in
+// `finalized`, and publish_callback used to run unguarded, so a finalized node
+// kept putting out datum_source AND the map -> chart_datum transform on /tf --
+// the frame every sounding is reduced against.
+//
+// datum_source is the observable half because it is the one branch of
+// publish_callback that does not need a resolved datum (the TF branches need an
+// earth -> base_link lookup this in-process fixture cannot supply). Both are
+// behind the same single state check at the top of the callback, so pinning
+// this pins the transform too. (#34)
+TEST_F(LifecycleReconfigureTest, ChartDatumNodeStopsPublishingWhenFinalized)
+{
+  auto options = isolated_options();
+  // 20 Hz so the observation window below spans many periods rather than one.
+  options.parameter_overrides({rclcpp::Parameter("publish_rate", 20.0)});
+  auto node = std::make_shared<ChartDatumNode>(options);
+  auto peer = make_peer("chart_datum_shutdown_peer");
+
+  std::vector<std_msgs::msg::String> sources;
+  auto source_sub = peer->create_subscription<std_msgs::msg::String>(
+    "datum_source", rclcpp::QoS(20).transient_local(),
+    [&sources](std_msgs::msg::String::SharedPtr msg) {sources.push_back(*msg);});
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(peer);
+  executor.add_node(node->get_node_base_interface());
+
+  ASSERT_NO_THROW(node->configure());
+  ASSERT_NO_THROW(node->activate());
+  ASSERT_TRUE(
+    spin_until(
+      executor, [&] {return sources.size() >= 2;}, std::chrono::seconds(5)))
+    << "an active node published " << sources.size()
+    << " datum_source message(s); the timer never ran";
+
+  ASSERT_NO_THROW(node->shutdown());
+  ASSERT_EQ(node->get_current_state().id(), kFinalized);
+
+  // Drain whatever was already in flight when the transition happened, then
+  // watch a fresh window: 700 ms is fourteen publish periods.
+  spin_for(executor, std::chrono::milliseconds(300));
+  sources.clear();
+  spin_for(executor, std::chrono::milliseconds(700));
+
+  EXPECT_TRUE(sources.empty())
+    << "a FINALIZED node published " << sources.size()
+    << " datum_source message(s) -- the publish timer survives `shutdown` from "
+       "`active` (on_deactivate and on_cleanup are both skipped), so "
+       "map -> chart_datum is still going out on /tf too";
 }
 
 TEST_F(LifecycleReconfigureTest, NavSatFixToVelocityReconfigures)
