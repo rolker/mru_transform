@@ -27,18 +27,32 @@ public:
   {
   }
 
-  CallbackReturn on_configure(const rclcpp_lifecycle::State &state)
+  CallbackReturn on_configure(const rclcpp_lifecycle::State &state) override
   {
-    declare_parameter("sea_surface_frame", sea_surface_frame_);
+    // Every declare is guarded: declare_parameter() throws
+    // ParameterAlreadyDeclaredException on a second configure, and the
+    // parameters are deliberately NOT undeclared in on_cleanup so that a value
+    // an operator set with `ros2 param set` survives a cleanup -> configure
+    // cycle. get_parameter() below therefore reads the operator's value on a
+    // re-configure and the launch/default value on the first one. (#34)
+    if (!has_parameter("sea_surface_frame")) {
+      declare_parameter("sea_surface_frame", sea_surface_frame_);
+    }
     get_parameter("sea_surface_frame", sea_surface_frame_);
 
-    declare_parameter("minimum_buffer_duration", minimum_buffer_duration_);
+    if (!has_parameter("minimum_buffer_duration")) {
+      declare_parameter("minimum_buffer_duration", minimum_buffer_duration_);
+    }
     get_parameter("minimum_buffer_duration", minimum_buffer_duration_);
 
-    declare_parameter("maximum_buffer_duration", maximum_buffer_duration_);
+    if (!has_parameter("maximum_buffer_duration")) {
+      declare_parameter("maximum_buffer_duration", maximum_buffer_duration_);
+    }
     get_parameter("maximum_buffer_duration", maximum_buffer_duration_);
 
-    declare_parameter("water_line_frame", water_line_frame_);
+    if (!has_parameter("water_line_frame")) {
+      declare_parameter("water_line_frame", water_line_frame_);
+    }
     get_parameter("water_line_frame", water_line_frame_);
     // Registering the frame here also invalidates any lever arm cached under a
     // previous configuration, so a cleanup -> configure with a different frame
@@ -52,13 +66,19 @@ public:
         "URDF water-line frame to correct the offset.");
     }
 
-    declare_parameter("chart_datum_frame", chart_datum_frame_);
+    if (!has_parameter("chart_datum_frame")) {
+      declare_parameter("chart_datum_frame", chart_datum_frame_);
+    }
     get_parameter("chart_datum_frame", chart_datum_frame_);
 
-    declare_parameter("mhhw_frame", mhhw_frame_);
+    if (!has_parameter("mhhw_frame")) {
+      declare_parameter("mhhw_frame", mhhw_frame_);
+    }
     get_parameter("mhhw_frame", mhhw_frame_);
 
-    declare_parameter("tide_range_margin", tide_range_margin_);
+    if (!has_parameter("tide_range_margin")) {
+      declare_parameter("tide_range_margin", tide_range_margin_);
+    }
     get_parameter("tide_range_margin", tide_range_margin_);
     if (tide_range_margin_ < 0.0) {
       RCLCPP_WARN(
@@ -83,13 +103,20 @@ public:
     return LifecycleNode::on_configure(state);
   }
 
-  CallbackReturn  on_activate(const rclcpp_lifecycle::State & state)
+  CallbackReturn  on_activate(const rclcpp_lifecycle::State & state) override
   {
     return LifecycleNode::on_activate(state);
   }
 
-  CallbackReturn on_cleanup(const rclcpp_lifecycle::State &state)
+  CallbackReturn on_cleanup(const rclcpp_lifecycle::State &state) override
   {
+    // Release everything on_configure created, in reverse: the subscription
+    // goes first so no callback can be running against members torn down
+    // below it.
+    odometry_subscription_.reset();
+    tide_estimate_pub_.reset();
+    transform_broadcaster_.reset();
+
     // The listener holds a reference to the buffer and fills it from its own
     // spin thread, so it must be torn down FIRST: releasing the buffer while
     // the listener is still running is a use-after-free.
@@ -99,8 +126,14 @@ public:
     // Nothing cached here survives the configuration that produced it.
     water_line_lever_arm_.reset();
     have_lookup_attempt_ = false;
+    logged_lever_arm_ = false;
     odometry_buffer_.clear();
     buffered_child_frame_id_.clear();
+
+    // Parameters are intentionally left declared: see on_configure. An
+    // operator's `ros2 param set` value must survive the cycle, and a value
+    // cannot be staged on an unconfigured node because setting an undeclared
+    // parameter is rejected. (#34)
     return LifecycleNode::on_cleanup(state);
   }
 

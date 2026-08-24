@@ -391,6 +391,23 @@ if(BUILD_TESTING)
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
   )
 
+  # Issue #34: configure -> cleanup -> configure must not throw
+  # ParameterAlreadyDeclaredException, and must keep a parameter value the
+  # operator set on the running node.
+  ament_add_gtest(test_lifecycle_reconfigure test/test_lifecycle_reconfigure.cpp)
+  target_link_libraries(test_lifecycle_reconfigure
+    rclcpp::rclcpp
+    rclcpp_lifecycle::rclcpp_lifecycle
+    ${geometry_msgs_TARGETS}
+    ${nav_msgs_TARGETS}
+    ${std_msgs_TARGETS}
+    tf2::tf2
+    tf2_ros::tf2_ros
+  )
+  target_include_directories(test_lifecycle_reconfigure PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/include"
+  )
+
   # unh_echoboats_project11#339: strict priority-preference nav-source
   # arbitration (highest-priority fresh source wins, not the newest sample).
   ament_add_gtest(test_nav_source_selection test/test_nav_source_selection.cpp)
