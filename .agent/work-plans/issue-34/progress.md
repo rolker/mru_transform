@@ -889,3 +889,117 @@ Nothing found here questions the design, the fix, or the tests. Fix the two must
 
 ### Actions
 - [ ] Not pushed, no PR opened — the operator gates both.
+
+## Implementation
+**Status**: complete
+**When**: 2026-08-24 11:10 -04:00
+**By**: Claude Code Agent (Claude Opus)
+
+**Branch**: feature/issue-34 at `8853344`
+**Addressed**: `## Local Review (Pre-Push)` (round 4, 2026-08-24 11:00 -04:00, branch at `97948ba`) — 2 must-fix, 1 suggestion, verdict `Ship: recommended`
+**Commits**: `eef23cb`, `f0f6f80`, `8853344`
+
+All three findings actioned; none deferred. This was the last pass — no round 5.
+
+### Actions
+- [x] (must-fix) Comment named a test that does not exist — `include/mru_transform/nodes/nav_sat_fix_to_velocity.hpp:128` — `eef23cb`
+- [x] (must-fix) The `on_error`-is-untestable claim was over-generalized; the case now exists — `test/test_lifecycle_reconfigure.cpp:553-611` — `f0f6f80`
+- [x] (suggestion) The `destructor` row overclaimed in two cells — `.agent/work-plans/issue-34/progress.md` (round-3 enumeration table) — `8853344`
+
+### What each fix actually was
+
+**1 — the wrong test name.** `NavSatFixToVelocityIgnoresFixesWhileInactive` →
+`NavSatFixToVelocityRespectsLifecycleState`, the name the mutation check in round
+4 proved is what pins the guard. **Checked that no other comment cites a test that
+does not exist**: extracted all 37 `TEST_F` fixture+case names from `test/`, then
+grepped every comment in `include/` and `src/` for identifiers of that shape. Four
+citations exist in total, and the other three all resolve —
+`SeaSurfaceEstimatorDoesNotBroadcastWhenInactive` (`tide_copier.hpp:84`),
+`ChartDatumNodeRecoversFromFailedConfigure` (`chart_datum_node.hpp:216`) and
+`ChartDatumNodeStopsPublishingWhenFinalized` (`test_lifecycle_reconfigure.cpp:182`).
+The one bad citation was the only one.
+
+**2 — `on_error` is now pinned on the node whose error path releases the PROJ
+context.** Took the case rather than narrowing the claim, and the reviewer's lever
+worked exactly as described. `ChartDatumNodeErrorPathReleasesItsPublishers`:
+`publish_rate = 1e-10` passes `on_configure`'s finiteness/positivity check, so the
+node reaches `inactive` with all three latched publishers up (asserted, 3 endpoints
+observed from a peer); `activate` then asks `create_wall_timer` for a `1e10 s`
+period, `safe_cast_to_period_in_ns` throws, and `rclcpp_lifecycle` catches it —
+so, as everywhere else in this file, the test asserts on the resulting **state**
+(`unconfigured`) and not on a throw, then on the publisher count falling to 0.
+
+Mutation-checked against the specific bug it targets: deleting *only* the
+`release_everything_on_configure_created()` call from `chart_datum_node::on_error`
+(leaving the override and its log line in place) makes
+`ChartDatumNodeErrorPathReleasesItsPublishers` **the sole failing case** — 1 gtest
+failure across the whole suite, with the intended message ("the error path left 3
+latched publisher(s) up"). Restored; tree verified clean.
+
+No live claim of untestability needed narrowing: the "no test" statements are in
+the round-2/round-3 history entries above, which are the record of what was
+believed then and are not rewritten. This entry is the correction. The `on_error`
+comments in the four headers never asserted untestability — they describe the
+mechanism, and `chart_datum_node.hpp:298-315` names `on_activate` as the worse
+case, which is precisely the path now covered.
+
+**3 — the destructor row, corrected rather than coded around.** Re-derived the
+declaration order from source before touching the table, and the reviewer is right
+in all three cells:
+
+- `sea_surface_estimator` — `odometry_subscription_` `:547` precedes
+  `transform_broadcaster_` `:588`, `tide_estimate_pub_` `:589`, `tf_buffer_` `:590`,
+  `tf_listener_` `:591`, so reverse-order destruction destroys the subscription
+  **last**, after everything its callback dereferences. The listener-before-buffer
+  half the old cell cited is correct; the subscription-first half is not.
+- `tide_copier` — `tf_subscription_` `:151` before `tf_publisher_` `:152`: the
+  publisher goes first, the exact inversion of the helper's order.
+- `nav_sat_fix_to_velocity` — `velocity_publisher_` `:172-173` before
+  `navsat_subscription_` `:174`: correct by declaration, the only one of the three.
+
+Corrected the table rather than reordering members, per the suggestion's own
+preferred branch. The reorder is not worthwhile here: this is the same residual
+already recorded for `~ChartDatumNode` — benign under the single-threaded executor
+every `main()` in this package uses, since no callback can be in flight while the
+node is being destroyed — and shuffling member declarations across three headers to
+buy nothing under the executors that actually run is churn on a branch that is
+otherwise ready to ship. The cells now say what the member order gives and mark the
+gap `⚠` with its blast radius, so a future composed multi-threaded deployment finds
+the truth rather than a `✓`.
+
+### Noted, not chased — a validation gap worth its own issue
+
+`publish_rate = 1e-10` passing `on_configure` and then throwing out of
+`on_activate` is a real gap in the round-3 validation, not only a test lever. The
+check rejects non-finite and non-positive rates, but not rates so small that
+`1.0 / publish_rate_` overflows `std::chrono::nanoseconds` (~9.22e9 s, i.e. any
+`publish_rate_` below ~1.08e-10). The operator-visible failure is worse than a
+`FAILURE` return: the node configures cleanly, then `activate` dumps a caught-
+exception trace and drops it back to `unconfigured`. `recalc_interval_` has the
+symmetric problem at the top end (any value above ~9.22e9 s). A one-line upper/lower
+bound in the same `on_configure` block would convert both into the same clean ERROR
++ `FAILURE` the other bad values already get.
+
+**Recommend filing as a follow-up** beside #35/#37/#38 — deliberately not opened
+here (issue-first policy: the operator decides), and deliberately not fixed on this
+branch, which the round-4 review closed. Note that fixing it must not silently
+delete the new test: the case would need a different lever (a `recalc_interval_`
+above the ceiling, or a parameter set after configure).
+
+### Verification — this run is the whole gate
+
+No CI, no pre-commit, no registered linters on this repo (mru_transform#35), so the
+local run is the only gate, per the round-4 entry.
+
+- **Clean rebuild** (`platforms_ws/build/mru_transform` + `install/mru_transform`
+  removed first): 0 errors, and **0 warnings in any changed file**. The only
+  warnings are the three pre-existing ones outside the diff —
+  `src/mru_transform.cpp:341` unused-parameter and vendored
+  `geodesy/geodesics.h:234` ×2.
+- **Full suite**: `93 tests, 0 errors, 0 failures, 0 skipped` (92 before this pass;
+  the new `on_error` case is the 93rd).
+- Mutation check as described under fix 2 — the new case fails alone, then passes
+  again once restored.
+- Working tree verified clean after every mutation; all commits authored
+  `Claude Code Agent <roland+claude-code@ccom.unh.edu>`.
+- Not pushed and no PR opened — the operator gates both.
