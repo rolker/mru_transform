@@ -80,3 +80,15 @@ logic reachable in the field, per the issue body.
 ### Actions
 - [ ] Implementation should add a configure->cleanup->configure lifecycle-harness test (there being no such fixture yet is a reason to build one, not to skip the test) rather than shipping the parameter-declaration fix untested.
 - [ ] Recommend extending the "audit the package's other lifecycle nodes" follow-up to include `tide_copier.cpp`, not just `chart_datum_node` and `nav_sat_fix_to_velocity` — it has the identical declare-without-undeclare shape.
+
+## Plan Authored
+**Status**: complete
+**When**: 2026-08-23 23:07 -04:00
+**By**: Claude Code Agent (Claude Sonnet)
+
+**Plan**: `.agent/work-plans/issue-34/plan.md` at `99e0795`
+**Branch**: feature/issue-34 at `99e0795`
+**Phases**: single (4 atomic commits, one per lifecycle node, each extending a shared regression fixture)
+
+### Open questions
+- [ ] No open questions — plan is review-plan-ready.
