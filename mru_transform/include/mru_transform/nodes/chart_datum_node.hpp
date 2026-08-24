@@ -59,9 +59,19 @@ public:
   {
   }
 
+  // The destructor is the last exit path, and the one a `finalized` node is
+  // most likely to be sitting on. cleanup_proj() alone was not enough: member
+  // subobjects are destroyed only AFTER this body returns, so publish_timer_
+  // and recalc_timer_ would still be armed while the PROJ context they call
+  // into was already freed -- precisely the use-after-free
+  // release_everything_on_configure_created() names and orders against. Benign
+  // under the single-threaded executor this node's main() uses, a real UAF
+  // under a composed multi-threaded one. The helper is idempotent, so running
+  // it here after an on_cleanup/on_shutdown/on_error has already run costs
+  // nothing. (#34)
   ~ChartDatumNode()
   {
-    cleanup_proj();
+    release_everything_on_configure_created();
   }
 
   CallbackReturn on_configure(const rclcpp_lifecycle::State & state) override
