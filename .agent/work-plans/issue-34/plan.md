@@ -183,13 +183,15 @@ them without a duplicate-`main` link collision. Extract each class into
 the failed-configure test needs to inject a bad `publish_rate` override before
 the first `configure`.
 
-These headers are genuinely installed: `install(DIRECTORY include/ ...)` ships
-everything under `include/mru_transform/` into the installed include tree. They
-are simply not part of an exported CMake target, so no `ament_export_*` change
-is required. (This corrects a second wrong claim in the previous revision, which
-said they would not be installed, and a third: `orientation_sensor.hpp` is a
-declaration header with `src/orientation_sensor.cpp` compiled into the exported
-library — it is not precedent for a header-only node class.)
+**Revised during implementation (round-1 review, commit `d6dd5d1`):** these
+headers are **not** installed. `install(DIRECTORY include/ ...)` would have
+shipped them, and no `ament_export_*` change is required either way — but
+`chart_datum_node.hpp` pulls in `proj.h`, which the package does not export, so
+they would ship as public API that no downstream could actually consume. They
+are a test seam, not API, and the install now carries `PATTERN "nodes" EXCLUDE`.
+(`orientation_sensor.hpp` is a declaration header with
+`src/orientation_sensor.cpp` compiled into the exported library — it is not
+precedent for a header-only node class either way.)
 
 ### Design decision 5 — `tide_copier` has no build target
 
@@ -266,18 +268,23 @@ Each node is split so the large moves are verifiable by inspection:
 | If we change... | Also update... | Included in plan? |
 |---|---|---|
 | `sea_surface_estimator`'s `on_configure`/`on_cleanup` | #32's lever-arm cache invalidation, which this PR makes reachable in the field | Yes — no code change needed; `setWaterLineFrame()` already runs in `on_configure` and now actually executes on a second pass |
-| Node class location (inline `.cpp` -> header) | These headers are installed by `install(DIRECTORY include/ ...)`, but belong to no exported target | Yes — no `ament_export_*` change needed |
+| Node class location (inline `.cpp` -> header) | Excluded from the install (`PATTERN "nodes" EXCLUDE`, commit `d6dd5d1`): they are a test seam, not API, and `chart_datum_node.hpp` needs the unexported `proj.h`. No `ament_export_*` change needed either way | Yes — revised during implementation |
 | `tide_copier`/`nav_sat_fix_to_velocity` publisher types | Their callbacks must check lifecycle state, since `LifecyclePublisher::publish` only warns (and drops) when inactive | Yes — decision 3 |
 | `tide_copier` gaining a build target | Nothing downstream; the launch file already expects the executable to exist | Yes — decision 5 |
-| `nav_sat_fix_to_velocity` gaining its first `on_cleanup` | Its `on_activate`/`on_deactivate` remain unoverridden base no-ops. With the publisher now a `LifecyclePublisher` and the callback state-guarded, the base no-ops are correct — no override needed | Yes — deliberately not adding empty overrides |
+| `nav_sat_fix_to_velocity` gaining its first `on_cleanup` | **Revised during implementation (round-1 review, commit `77e7542`): `on_deactivate` IS overridden**, to clear `last_navsatfix_`. The ACTIVE guard alone leaves the pre-deactivation fix inside the 2 s `maximum_interval_` window, so a deactivate→activate inside 2 s published a velocity averaged across the muted gap. `on_activate` remains an unoverridden base no-op | Yes — revised during implementation |
 
 ## Documentation & Instruction Impact
 
-- **Stale docs** (must land in this PR): None — `README.md`'s parameter tables
-  describe configure-time behaviour and are unaffected. Nothing externally
-  visible changes except that a deactivated `tide_copier` / `nav_sat_fix_to_velocity`
-  now correctly stops publishing, which is the documented lifecycle contract
-  rather than a documented behaviour of these nodes.
+- **Stale docs**: **Revised during implementation (round-2 review, commit
+  `e7d6b22`): `README.md` DOES need updating.** The plan assumed no externally
+  visible change beyond a deactivated `tide_copier` /
+  `nav_sat_fix_to_velocity` correctly stopping — the documented lifecycle
+  contract. But the round-1 fix pass added buffer-duration validation that
+  fails `on_configure`, and the README already documents exactly this kind of
+  thing for `datum_config_path` and `tide_range_margin`. The
+  `sea_surface_estimator` parameter table now carries it, together with a note
+  on what a configure FAILURE actually does operationally (a quiet failure, not
+  an interlock).
 - **Agent-instruction candidates** (proposals only): the declare-if-not-declared
   guard for `LifecycleNode` subclasses, and the non-virtual `publish` trap
   behind holding a lifecycle publisher as `rclcpp::Publisher`, are both reusable
