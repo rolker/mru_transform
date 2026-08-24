@@ -92,3 +92,38 @@ logic reachable in the field, per the issue body.
 
 ### Open questions
 - [ ] No open questions — plan is review-plan-ready.
+
+## Plan Review
+**Status**: complete
+**When**: 2026-08-23 23:15 -04:00
+**By**: Claude Code Agent (Claude Opus)
+
+**Plan**: `.agent/work-plans/issue-34/plan.md` at `99e0795`
+**PR**: PR-less (`--issue` mode; branch `feature/issue-34`)
+**Verdict**: changes-requested
+
+### Evaluation
+
+| Dimension | Verdict | Notes |
+|---|---|---|
+| Scope | Good | Four nodes + one shared fixture in one PR is the operator's settled call and is right-sized; the prerequisite extraction is the only scope question and it is justified (see findings 5-6). |
+| Issue alignment | Good | Covers all four affected `LifecycleNode`s and both Issue-Review actions (regression fixture in scope; `tide_copier` added). |
+| File targeting | Needs work | Complete for the chosen approach, but `nodes/*.cpp` resource teardown (publishers/subscriptions) is under-specified for three of the four nodes. |
+| Consequences | Concern | Misses two reachable consequences: the failed-`configure` path (finding 3) and the operator's `ros2 param set` reconfigure workflow the issue itself cites as the motivation (finding 2). |
+| Documentation & instruction impact | Good | Present and non-silent; instruction item correctly framed as a candidate. Its wording changes if finding 1 changes the decision. |
+| Principle alignment | Needs work | "A change includes its consequences" — the fix as specified leaves the node re-configurable but not re-configurABLE (params revert to launch overrides). |
+| ADR compliance | Concern | ADR-0008 (follow ROS 2 conventions) is cited in support of `undeclare_parameter()`, but the prevailing convention upstream and in this workspace is the `has_parameter()` guard (finding 1). |
+| ROS conventions | Concern | See findings 1-4. |
+
+### Findings
+- [ ] (must-fix) Design decision 1 inverts the actual convention: nav2 ships `nav2_util::declare_parameter_if_not_declared` for exactly this case, and every lifecycle node in this workspace that solved this bug used a `has_parameter()` guard (`udp_bridge`'s documented `declareIfMissing()` wrapper, `s57_grids/grid_publisher.cpp`, `s57_grids_catalog.cpp`, `helm_manager`, `marine_control/control_server`, `manda_coverage`); `undeclare_parameter()` appears nowhere in the workspace. Re-decide, or re-justify against that evidence rather than against ADR-0008 in the abstract — `plan.md:39,57`
+- [ ] (must-fix) Undeclaring breaks the reconfigure workflow the issue is filed to enable: `on_cleanup` drops the parameter, so a value the operator set with `ros2 param set` is discarded and the next `configure` re-reads the launch override; while unconfigured no value can be staged either (undeclared params reject `set`). With the guard, the second `on_configure` skips the declare and `get_parameter` picks up the operator's value — "reconfigure a boat between lines" actually reconfigures — `plan.md:39-58`
+- [ ] (must-fix) The failed-`configure` path is left broken and is reachable: `chart_datum_node` returns `FAILURE` after 8 of its 11 declares (the `publish_rate`/`recalc_interval` validation), the FSM sends a failed configure straight back to `unconfigured` without invoking `on_cleanup`, and `cleanup` is not a legal transition from `unconfigured` — so the planned undeclares can never run and the next `configure` still throws. The plan's `has_parameter()`-guard rationale at `plan.md:70-73` describes that unreachable `FAILURE`-then-`cleanup` transition. A declare-site guard fixes this path; undeclare-in-cleanup cannot. Add a regression case: `publish_rate:=0` -> `FAILURE` -> valid `configure` must not throw — `plan.md:70-73`
+- [ ] (must-fix) `nav_sat_fix_to_velocity`'s new `on_cleanup` needs `last_navsatfix_` cleared, not just parameters and pub/sub: the retained fix makes the first message after a re-configure compute a velocity across the cleanup gap whenever that gap is under `maximum_interval_` (default 2 s — routine for a quick cycle, and for bag/sim time) — `plan.md:127-133`
+- [ ] (must-fix) The "symmetry with the other three nodes' cleanup" justification is factually wrong and should not drive the design: none of the other three release pub/sub (`sea_surface_estimator` resets TF + caches only; `chart_datum_node` resets timers/TF/PROJ but not its three publishers; `tide_copier` resets nothing). Decide the target state explicitly — `s57_grids/grid_publisher.cpp`'s `on_cleanup` is the in-house model that releases everything `on_configure` created — and apply it to all four rather than to one — `plan.md:129-133`
+- [ ] (must-fix) Found while checking finding 5, field-relevant and squarely inside the callbacks this PR rewrites: `tide_copier` and `nav_sat_fix_to_velocity` hold their publishers as `rclcpp::Publisher<T>::SharedPtr`. `rclcpp::Publisher::publish` is a non-virtual template (jazzy `publisher.hpp:242,296`) that `LifecyclePublisher` only hides, so publishing through the base pointer bypasses the activation gate; neither callback checks lifecycle state (`sea_surface_estimator`'s does). A deactivated or cleaned-up `tide_copier` therefore keeps copying `map_tide` into `/tf` — the tide feeding every sounding. Fix here (member type -> `LifecyclePublisher`, release the subscription in `on_cleanup`) or file it with a note in the PR; do not leave it undecided — `plan.md:127-137`
+- [ ] (suggestion) Split each node's commit into a pure mechanical class move and a separate fix+test commit. The extraction itself is justified (an in-process typed assertion needs the class declaration; no smaller route exists), but a 400-line and a 558-line whole-file move bundled with the behaviour change is what makes this PR hard to review — a no-op move commit is verifiable by inspection at zero cost — `plan.md:100-108,109-137`
+- [ ] (suggestion) Two claims in the extraction rationale need correcting: `orientation_sensor.hpp` is a declaration header with `src/orientation_sensor.cpp` compiled into the exported library, not a header-only class, so it is not precedent for header-only node classes; and `install(DIRECTORY include/ ...)` does ship anything under `include/mru_transform/` into the installed include tree, so "not part of the exported API" is true only in the `ament_export_targets` sense — `plan.md:106,175`
+- [ ] (suggestion) Keep the `launch_testing` rejection but restate its grounds: the substantive reasons (typed assertion at the throwing transition, no process/service round trip) hold; "consistency with the existing test" is thin, since `test_subscribe_once` constructs a plain helper class, not a node with a `main()`. Note what in-process does not cover — the real executable and the `ros2 lifecycle set` service path the operator uses — `plan.md:74-99`
+- [ ] (suggestion) Pin the chosen semantics in the fixture, not just the absence of a throw: assert what `has_parameter`/`get_parameter` report after `cleanup`, and (with the guard approach) that a value set between `cleanup` and `configure` survives into the reconfigured node — that is the behaviour the field workflow depends on — `plan.md:109-137`
+- [ ] (suggestion) This repo has no `.agents/README.md`; noted as a gap per AGENTS.md, not work for this PR.
