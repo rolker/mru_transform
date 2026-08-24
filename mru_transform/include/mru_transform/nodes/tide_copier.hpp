@@ -49,6 +49,9 @@ public:
     // callback can be running against the publisher released below it -- and
     // because a cleaned-up node that keeps a live /tf subscription is how this
     // node went on copying map_tide after its lifecycle said it had stopped.
+    // Ordering alone only suffices under a single-threaded executor:
+    // shared_ptr::reset() provides no synchronization against a callback
+    // already dispatched. This node's main() uses one.
     tf_subscription_.reset();
     tf_publisher_.reset();
 

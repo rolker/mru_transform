@@ -255,6 +255,9 @@ public:
     // Timers are normally released by on_deactivate, but cleanup is also
     // reachable from inactive after a configure that never activated -- and a
     // timer outliving the PROJ context it calls into would be a use-after-free.
+    // Resetting a timer does not wait for a callback already dispatched;
+    // ordering the teardown is only sufficient because this node's main() uses
+    // a single-threaded executor.
     publish_timer_.reset();
     recalc_timer_.reset();
 

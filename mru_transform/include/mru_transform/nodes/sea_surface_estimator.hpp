@@ -144,7 +144,12 @@ public:
   {
     // Release everything on_configure created, in reverse: the subscription
     // goes first so no callback can be running against members torn down
-    // below it.
+    // below it. That ordering is only sufficient under a single-threaded
+    // executor -- shared_ptr::reset() itself synchronizes nothing, so with a
+    // multi-threaded executor a callback already dispatched could still be
+    // running here. Every main() in this package uses a single-threaded
+    // executor; the installed headers now take NodeOptions, so a composed
+    // future user has to keep to that or add real synchronization.
     odometry_subscription_.reset();
     tide_estimate_pub_.reset();
     transform_broadcaster_.reset();
