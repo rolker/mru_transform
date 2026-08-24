@@ -1,6 +1,9 @@
 #ifndef MRU_TRANSFORM_NODES_NAV_SAT_FIX_TO_VELOCITY_HPP
 #define MRU_TRANSFORM_NODES_NAV_SAT_FIX_TO_VELOCITY_HPP
 
+#include <functional>
+#include <string>
+
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_lifecycle/lifecycle_node.hpp"
 #include "lifecycle_msgs/msg/state.hpp"

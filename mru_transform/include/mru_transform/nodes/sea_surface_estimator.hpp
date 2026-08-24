@@ -2,6 +2,10 @@
 #define MRU_TRANSFORM_NODES_SEA_SURFACE_ESTIMATOR_HPP
 
 #include <cmath>
+#include <functional>
+#include <map>
+#include <memory>
+#include <string>
 
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_lifecycle/lifecycle_node.hpp"

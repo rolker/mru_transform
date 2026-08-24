@@ -11,6 +11,7 @@
 // A node that undeclared on cleanup would pass the first and fail the second.
 
 #include <chrono>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>

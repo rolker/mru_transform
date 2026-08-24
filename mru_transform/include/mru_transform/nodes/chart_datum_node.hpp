@@ -26,9 +26,13 @@
 #ifndef MRU_TRANSFORM_NODES_CHART_DATUM_NODE_HPP
 #define MRU_TRANSFORM_NODES_CHART_DATUM_NODE_HPP
 
+#include <chrono>
 #include <cmath>
+#include <exception>
 #include <filesystem>
+#include <functional>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
