@@ -257,6 +257,37 @@ public:
 
   CallbackReturn on_cleanup(const rclcpp_lifecycle::State & state) override
   {
+    release_everything_on_configure_created();
+    // Parameters stay declared on purpose: see on_configure.
+    return LifecycleNode::on_cleanup(state);
+  }
+
+  // An exception thrown out of on_configure or on_activate routes the FSM
+  // through `errorprocessing` to `unconfigured` -- and on_cleanup is NOT one of
+  // the callbacks that runs on that path, so without this override nothing
+  // would ever release what the failed transition had already allocated. The
+  // PROJ context is the one that matters (the same leak the datum-config catch
+  // block in on_configure exists to prevent, by the same argument), but
+  // on_activate is worse: a throwing create_wall_timer would strand the
+  // context, both pipelines, the TF members and all three publishers. The
+  // supported recovery from `unconfigured` is another configure, which would
+  // overwrite every one of those pointers. Release them here instead. (#34)
+  CallbackReturn on_error(const rclcpp_lifecycle::State & state) override
+  {
+    RCLCPP_ERROR(
+      get_logger(),
+      "Transition failed with an exception; releasing everything the failed "
+      "configure/activate had allocated. Correct the fault and configure again.");
+    release_everything_on_configure_created();
+    return LifecycleNode::on_error(state);
+  }
+
+private:
+  // Shared by on_cleanup and on_error: every reset here is null-safe and
+  // re-nulls what it releases, so it is idempotent and safe to run twice or on
+  // a half-built node.
+  void release_everything_on_configure_created()
+  {
     // Timers are normally released by on_deactivate, but cleanup is also
     // reachable from inactive after a configure that never activated -- and a
     // timer outliving the PROJ context it calls into would be a use-after-free.
@@ -287,12 +318,8 @@ public:
     mllw_pub_.reset();
     mhhw_pub_.reset();
     datum_source_pub_.reset();
-
-    // Parameters stay declared on purpose: see on_configure.
-    return LifecycleNode::on_cleanup(state);
   }
 
-private:
   // Collect .gtx grid files matching a suffix (e.g., "_mllw")
   std::string collect_grids(const std::string & suffix)
   {
