@@ -566,15 +566,26 @@ private:
 
   void publish_callback()
   {
-    // `shutdown` from `active` runs on_shutdown ONLY -- it skips on_deactivate
-    // and on_cleanup, and no node here overrides on_shutdown -- so both timers
-    // survive into `finalized` and this callback keeps firing. tf_broadcaster_
-    // is a plain TransformBroadcaster with no activation gate, and
-    // LifecyclePublisher's gate is a non-virtual hide that publish() bypasses,
-    // so nothing but this check stops a finalized node from putting
-    // map -> chart_datum on /tf. That is the frame every sounding is reduced
-    // against: it must follow this node's lifecycle state. The same check also
-    // covers `errorprocessing`, which is not ACTIVE either. (#34)
+    // Two things stop a non-active node from publishing here, and only one of
+    // them is the publisher's own gate.
+    // rclcpp_lifecycle::LifecyclePublisher::publish() IS virtual (jazzy
+    // lifecycle_publisher.hpp) and returns early unless is_activated(), so
+    // mllw_pub_, mhhw_pub_ and datum_source_pub_ are gated by the publisher.
+    // (This comment used to call that gate "a non-virtual hide that publish()
+    // bypasses" -- false, and not the reason the check is here.)
+    // tf_broadcaster_ is a plain tf2_ros::TransformBroadcaster with NO
+    // activation gate at all, so for the map -> chart_datum transform this
+    // check is the only gate there is.
+    //
+    // Both timers are created in on_activate and released by on_deactivate,
+    // on_cleanup, on_shutdown and on_error, so a non-active node should not
+    // reach this callback at all. `shutdown` from `active` was the hole: it
+    // runs on_shutdown ONLY, skipping on_deactivate and on_cleanup, and nothing
+    // overrode on_shutdown -- so both timers stayed armed into `finalized`.
+    // That is now closed at the cause, and this check is the second gate behind
+    // it. chart_datum is the frame every sounding is reduced against: it must
+    // follow this node's lifecycle state. The same check also covers
+    // `errorprocessing`, which is not ACTIVE either. (#34)
     if (get_current_state().id() != lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE) {
       return;
     }

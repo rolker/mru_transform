@@ -146,6 +146,18 @@ tf2_msgs::msg::TFMessage make_tide_tf(
   return message;
 }
 
+nav_msgs::msg::Odometry make_odom(double seconds, double z)
+{
+  nav_msgs::msg::Odometry odom;
+  odom.header.stamp = rclcpp::Time(
+    static_cast<int64_t>(seconds * 1e9), RCL_ROS_TIME);
+  odom.header.frame_id = "map";
+  odom.child_frame_id = "base_link";
+  odom.pose.pose.position.z = z;
+  odom.pose.pose.orientation.w = 1.0;
+  return odom;
+}
+
 sensor_msgs::msg::NavSatFix make_fix(double seconds, double latitude)
 {
   sensor_msgs::msg::NavSatFix fix;
@@ -274,6 +286,73 @@ TEST_F(LifecycleReconfigureTest, SeaSurfaceEstimatorRejectsUnusableBufferDuratio
       << "(0, 0) was accepted; an unsmoothed single-sample tide is refused as "
          "policy, not because the buffer would empty";
   }
+}
+
+// The state check at the top of odometry_callback is the ONLY gate on the sea
+// surface transform: transform_broadcaster_ is a plain
+// tf2_ros::TransformBroadcaster, which has no activation gate of any kind.
+// tide_estimate_pub_ is a LifecyclePublisher, whose publish() IS virtual and
+// does return early unless activated, so the topic half stays quiet either way
+// -- only the TF half can prove the check. Subscriptions are not lifecycle
+// gated, so a configured-but-inactive node really does receive odometry and
+// would broadcast map_tide from it.
+//
+// This case exists because deleting that one check left the rest of this file
+// green: round 1 changed the publisher TYPE and added the check in the same
+// mutation and never separated them, so the check itself was pinned by nothing.
+// (#34)
+TEST_F(LifecycleReconfigureTest, SeaSurfaceEstimatorDoesNotBroadcastWhenInactive)
+{
+  auto options = isolated_options();
+  // One sample is then enough to publish, so a single odometry message per
+  // phase decides the case.
+  options.parameter_overrides({rclcpp::Parameter("minimum_buffer_duration", 0.0)});
+  auto node = std::make_shared<SeaSurfaceEstimator>(options);
+  auto peer = make_peer("sea_surface_broadcast_peer");
+
+  auto odom_pub = peer->create_publisher<nav_msgs::msg::Odometry>("odom", 10);
+  std::vector<geometry_msgs::msg::TransformStamped> surfaces;
+  auto tf_sub = peer->create_subscription<tf2_msgs::msg::TFMessage>(
+    "tf", 10,
+    [&surfaces](tf2_msgs::msg::TFMessage::SharedPtr msg) {
+      for (const auto & transform : msg->transforms) {
+        surfaces.push_back(transform);
+      }
+    });
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(peer);
+  executor.add_node(node->get_node_base_interface());
+
+  ASSERT_NO_THROW(node->configure());
+  ASSERT_TRUE(
+    spin_until(
+      executor, [&] {return odom_pub->get_subscription_count() == 1;},
+      std::chrono::seconds(15)))
+    << "the node never subscribed to odom";
+  ASSERT_TRUE(
+    spin_until(
+      executor, [&] {return tf_sub->get_publisher_count() > 0;},
+      std::chrono::seconds(15)))
+    << "the node's transform broadcaster never matched the peer";
+
+  odom_pub->publish(make_odom(100.0, 1.25));
+  spin_for(executor, std::chrono::milliseconds(500));
+  EXPECT_TRUE(surfaces.empty())
+    << "a configured-but-inactive node broadcast " << surfaces.size()
+    << " sea surface transform(s) -- the plain TransformBroadcaster has no "
+       "activation gate, so the state check in odometry_callback is the only "
+       "thing that can stop this";
+
+  ASSERT_NO_THROW(node->activate());
+  odom_pub->publish(make_odom(101.0, 1.25));
+  ASSERT_TRUE(
+    spin_until(
+      executor, [&] {return surfaces.size() == 1;}, std::chrono::seconds(5)))
+    << "an active node did not broadcast the sea surface";
+  EXPECT_EQ(surfaces.front().child_frame_id, "map_tide");
+
+  node->deactivate();
 }
 
 TEST_F(LifecycleReconfigureTest, ChartDatumNodeReconfigures)
@@ -508,8 +587,11 @@ TEST_F(LifecycleReconfigureTest, NavSatFixToVelocityKeepsOperatorParameter)
 
 // Two things at once, because they share a harness:
 //   * an inactive node must not publish. velocity_publisher_ used to be an
-//     rclcpp::Publisher, whose non-virtual publish() bypasses the lifecycle
-//     activation gate entirely, and the callback did not check state.
+//     rclcpp::Publisher, which has no activation gate at all, and the callback
+//     did not check state. (It is a LifecyclePublisher now, whose publish() is
+//     virtual and does gate on is_activated(); the state check in the callback
+//     is kept as the gate that does not depend on the member's type, and for
+//     the reference-fix reason the case below pins.)
 //   * the first fix after a re-configure -- or after a re-activation -- must
 //     not be differenced against a fix from before the gap: with
 //     maximum_interval_ defaulting to 2 s, a quick cycle would otherwise report
@@ -645,11 +727,13 @@ TEST_F(LifecycleReconfigureTest, TideCopierKeepsOperatorParameter)
     "survey/map_tide");
 }
 
-// tide_copier held its /tf publisher as an rclcpp::Publisher, whose
-// non-virtual publish() bypasses the activation gate, and never released its
-// /tf subscription on cleanup -- so a deactivated or cleaned-up node kept
-// copying map_tide into /tf. map_tide is the tide applied to every sounding,
-// so it has to follow the node's lifecycle state.
+// tide_copier held its /tf publisher as a plain rclcpp::Publisher, which has
+// no activation gate at all, and never released its /tf subscription on
+// cleanup -- so a deactivated or cleaned-up node kept copying map_tide into
+// /tf. map_tide is the tide applied to every sounding, so it has to follow the
+// node's lifecycle state. Both halves of the fix are pinned here: the member is
+// a LifecyclePublisher (whose publish() is virtual and does gate), and
+// on_cleanup releases the subscription.
 //
 // The last phase doubles as the value-survival check with teeth: the frame the
 // operator set while the node was configured is the frame that comes out after

@@ -74,12 +74,20 @@ public:
 private:
   void navsatfix_callback(const sensor_msgs::msg::NavSatFix::SharedPtr msg)
   {
-    // rclcpp::Publisher::publish() is a non-virtual template that
-    // LifecyclePublisher only hides, so nothing but this check keeps a
-    // deactivated node from publishing. Returning before last_navsatfix_ is
-    // updated is deliberate -- fixes arriving while inactive must not become
-    // the reference for a later difference. The gap itself is made safe by
-    // on_deactivate/on_cleanup clearing last_navsatfix_, not by the
+    // rclcpp_lifecycle::LifecyclePublisher::publish() IS virtual (jazzy
+    // lifecycle_publisher.hpp) and returns early unless is_activated(), so the
+    // publish itself is gated by the publisher now that velocity_publisher_ is
+    // a LifecyclePublisher. This comment used to say publish() was a
+    // non-virtual hide the call site bypassed; that was true of the plain
+    // rclcpp::Publisher held on jazzy and went stale when the member type
+    // changed. It is not why the check is kept.
+    //
+    // The check is load-bearing for something the publisher's gate cannot do:
+    // it returns BEFORE last_navsatfix_ is updated, so a fix arriving while the
+    // node is muted never becomes the reference for a later difference --
+    // pinned by NavSatFixToVelocityIgnoresFixesWhileInactive, which fails if
+    // this check alone is deleted. The gap itself is made safe by
+    // on_deactivate/on_cleanup/on_shutdown clearing last_navsatfix_, not by the
     // maximum_interval_ check, which a sub-2 s cycle would pass.
     if (get_current_state().id() != lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE) {
       return;

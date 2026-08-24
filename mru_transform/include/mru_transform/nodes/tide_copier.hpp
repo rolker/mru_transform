@@ -61,10 +61,27 @@ public:
 
   void tf_callback(const tf2_msgs::msg::TFMessage::SharedPtr msg)
   {
-    // rclcpp::Publisher::publish() is a non-virtual template that
-    // LifecyclePublisher only hides, so nothing but this check keeps a
-    // deactivated node from copying. map_tide is the tide applied to every
-    // sounding: it must follow this node's lifecycle state, not ignore it.
+    // Why this check exists, stated correctly.
+    // rclcpp_lifecycle::LifecyclePublisher::publish() IS virtual (jazzy
+    // lifecycle_publisher.hpp) and returns early unless is_activated(), so now
+    // that tf_publisher_ is a LifecyclePublisher the inactive and cleaned-up
+    // paths are gated by the publisher itself. This comment used to claim
+    // publish() was a non-virtual hide that the call site bypassed: that was
+    // true of the plain rclcpp::Publisher this node held on jazzy, and it went
+    // stale when the member type changed here. It is NOT why the check is kept.
+    //
+    // What the publisher's gate does not cover is a transition that skips its
+    // teardown: `shutdown` from `active` runs on_shutdown ONLY, so
+    // LifecycleNode::on_deactivate never runs and every managed publisher stays
+    // activated into `finalized`. on_shutdown below closes that at the cause;
+    // this check is the second, publisher-type-independent gate behind it, and
+    // it is the same shape the other three nodes use -- where it is not
+    // redundant at all, because a plain tf2_ros::TransformBroadcaster has no
+    // activation gate whatsoever (pinned by
+    // SeaSurfaceEstimatorDoesNotBroadcastWhenInactive).
+    //
+    // map_tide is the tide applied to every sounding: it must follow this
+    // node's lifecycle state, not ignore it.
     if (get_current_state().id() != lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE) {
       return;
     }
