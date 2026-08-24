@@ -246,47 +246,6 @@ public:
     return LifecycleNode::on_error(state);
   }
 
-private:
-  // Shared by on_cleanup, on_shutdown and on_error: everything on_configure
-  // created,
-  // released in reverse. The subscription goes first so no callback can be
-  // running against members torn down below it. That ordering is only
-  // sufficient under a single-threaded executor -- shared_ptr::reset() itself
-  // synchronizes nothing, so with a multi-threaded executor a callback already
-  // dispatched could still be running here. Every main() in this package uses
-  // a single-threaded executor. These node headers are NOT installed (the
-  // `nodes/` directory is excluded from the install; they are a source-tree
-  // test seam), but they do take NodeOptions, so anyone who composes one of
-  // these classes has to keep to a single-threaded executor or add real
-  // synchronization.
-  // (The one-argument TransformListener does spin a thread of its own
-  // regardless of the executor, so "single-threaded" is a claim about this
-  // node's own callbacks; that thread only fills the buffer, and the reset
-  // ordering below is what makes it safe.)
-  //
-  // Every reset is null-safe and re-nulls what it releases, so the helper is
-  // idempotent and correct on a half-built node.
-  void release_everything_on_configure_created()
-  {
-    odometry_subscription_.reset();
-    tide_estimate_pub_.reset();
-    transform_broadcaster_.reset();
-
-    // The listener holds a reference to the buffer and fills it from its own
-    // spin thread, so it must be torn down FIRST: releasing the buffer while
-    // the listener is still running is a use-after-free.
-    tf_listener_.reset();
-    tf_buffer_.reset();
-
-    // Nothing cached here survives the configuration that produced it.
-    water_line_lever_arm_.reset();
-    have_lookup_attempt_ = false;
-    logged_lever_arm_ = false;
-    odometry_buffer_.clear();
-    buffered_child_frame_id_.clear();
-  }
-
-public:
   void odometry_callback(const nav_msgs::msg::Odometry::SharedPtr msg)
   {
     if (get_current_state().id() != lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE)
@@ -411,6 +370,43 @@ public:
   }
 
 private:
+  // Shared by on_cleanup, on_shutdown and on_error: everything on_configure
+  // created, released in reverse. The subscription goes first so no callback
+  // can be running against members torn down below it. That ordering is only
+  // sufficient under a single-threaded executor -- shared_ptr::reset() itself
+  // synchronizes nothing, so with a multi-threaded executor a callback already
+  // dispatched could still be running here. Every main() in this package uses
+  // a single-threaded executor. These node headers are NOT installed (the
+  // `nodes/` directory is excluded from the install; they are a source-tree
+  // test seam), but they do take NodeOptions, so anyone who composes one of
+  // these classes has to keep to a single-threaded executor or add real
+  // synchronization. (The one-argument TransformListener does spin a thread of its own
+  // regardless of the executor, so "single-threaded" is a claim about this
+  // node's own callbacks; that thread only fills the buffer, and the reset
+  // ordering below is what makes it safe.)
+  //
+  // Every reset is null-safe and re-nulls what it releases, so the helper is
+  // idempotent and correct on a half-built node.
+  void release_everything_on_configure_created()
+  {
+    odometry_subscription_.reset();
+    tide_estimate_pub_.reset();
+    transform_broadcaster_.reset();
+
+    // The listener holds a reference to the buffer and fills it from its own
+    // spin thread, so it must be torn down FIRST: releasing the buffer while
+    // the listener is still running is a use-after-free.
+    tf_listener_.reset();
+    tf_buffer_.reset();
+
+    // Nothing cached here survives the configuration that produced it.
+    water_line_lever_arm_.reset();
+    have_lookup_attempt_ = false;
+    logged_lever_arm_ = false;
+    odometry_buffer_.clear();
+    buffered_child_frame_id_.clear();
+  }
+
   // Resolve the vehicle-frame-to-water-line lever arm, from cache where
   // possible. It comes from the URDF via a static transform, so one successful
   // lookup normally holds for the life of the node; the cache is nevertheless
