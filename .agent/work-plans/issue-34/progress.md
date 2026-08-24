@@ -1105,16 +1105,40 @@ a known-incomplete new file in the tree to satisfy a round-counting rule, which
 the 93-test suite is sufficient verification, not a fifth review round.
 
 ### Findings
-- [ ] (must-fix, Copilot R1) `nodes/nav_sat_fix_to_velocity.hpp` includes no standard header at all: add `<functional>` (`std::bind`/`std::placeholders` `:42`) and `<string>` (`:170`) — `mru_transform/include/mru_transform/nodes/nav_sat_fix_to_velocity.hpp`
-- [ ] (must-fix, Copilot R1) `nodes/sea_surface_estimator.hpp` includes only `<cmath>`: add `<functional>`, `<map>`, `<memory>`, `<string>` — `mru_transform/include/mru_transform/nodes/sea_surface_estimator.hpp`
-- [ ] (must-fix, Copilot R1 + this triage) `nodes/chart_datum_node.hpp`: add `<chrono>`, `<functional>`, `<memory>` as Copilot names, **plus `<exception>`** for the `catch (const std::exception &)` at `:210` that Copilot missed — `mru_transform/include/mru_transform/nodes/chart_datum_node.hpp`
-- [ ] (must-fix, Copilot R1) `nodes/tide_copier.hpp`: add `<functional>` — `mru_transform/include/mru_transform/nodes/tide_copier.hpp`
-- [ ] (suggestion, Copilot R1) `test/test_lifecycle_reconfigure.cpp`: add `<cstdint>` for `std::uint8_t` — `mru_transform/test/test_lifecycle_reconfigure.cpp`
-- [ ] (suggestion, this triage) Record on mru_transform#35 that Copilot's first pass over this PR found five include-hygiene defects a registered `ament_cmake_cpplint` would have caught pre-push — concrete cost evidence for wiring the linters
-- [ ] (suggestion, this triage) After the includes land: rebuild clean + full suite (expect 93/93), then re-request a Copilot review; do **not** run a fifth local review round
+- [x] (must-fix, Copilot R1) `nodes/nav_sat_fix_to_velocity.hpp` includes no standard header at all: add `<functional>` (`std::bind`/`std::placeholders` `:42`) and `<string>` (`:170`) — `mru_transform/include/mru_transform/nodes/nav_sat_fix_to_velocity.hpp`
+- [x] (must-fix, Copilot R1) `nodes/sea_surface_estimator.hpp` includes only `<cmath>`: add `<functional>`, `<map>`, `<memory>`, `<string>` — `mru_transform/include/mru_transform/nodes/sea_surface_estimator.hpp`
+- [x] (must-fix, Copilot R1 + this triage) `nodes/chart_datum_node.hpp`: add `<chrono>`, `<functional>`, `<memory>` as Copilot names, **plus `<exception>`** for the `catch (const std::exception &)` at `:210` that Copilot missed — `mru_transform/include/mru_transform/nodes/chart_datum_node.hpp`
+- [x] (must-fix, Copilot R1) `nodes/tide_copier.hpp`: add `<functional>` — `mru_transform/include/mru_transform/nodes/tide_copier.hpp`
+- [x] (suggestion, Copilot R1) `test/test_lifecycle_reconfigure.cpp`: add `<cstdint>` for `std::uint8_t` — `mru_transform/test/test_lifecycle_reconfigure.cpp`
+- [x] (suggestion, this triage) Record on mru_transform#35 that Copilot's first pass over this PR found five include-hygiene defects a registered `ament_cmake_cpplint` would have caught pre-push — concrete cost evidence for wiring the linters (deferred: already recorded as cost evidence in this triage entry itself; no new issue opened, per explicit instruction not to file follow-ups for this)
+- [x] (suggestion, this triage) After the includes land: rebuild clean + full suite (expect 93/93), then re-request a Copilot review; do **not** run a fifth local review round — rebuild + full suite done here (93/93, 0 failures); re-requesting the Copilot review is the operator/orchestrator's next-step action, not this pass's
 
 ### False positives
 - None. All five Copilot comments verify at source, and none re-raises an item the local rounds settled (`has_parameter()` vs `undeclare_parameter()`, the `(0,0)` policy rejection, the `on_error` testability scope, the unisolatable `tide_copier`/`chart_datum_node` guards, or the #37/#38/#39 deferrals).
 
 ### Actions
-- [ ] Nothing pushed, nothing resolved or dismissed on the PR, no merge — the operator gates all three.
+- [x] Nothing pushed, nothing resolved or dismissed on the PR, no merge — the operator gates all three. (deferred: push/merge are operator-gated per the sub-agent handoff contract; this pass commits locally only)
+
+## Implementation
+**Status**: complete
+**When**: 2026-08-24 11:51 -04:00
+**By**: Claude Code Agent (Claude Sonnet)
+
+**PR**: #40 at `b5074ca`
+**Addressed**: Integrated Review, 2026-08-24 11:35 -04:00 @ `b1c4a05`
+**Commits**: `b5074ca`
+
+### Actions
+- [x] `nodes/nav_sat_fix_to_velocity.hpp` — added `<functional>`, `<string>` — `mru_transform/include/mru_transform/nodes/nav_sat_fix_to_velocity.hpp`
+- [x] `nodes/sea_surface_estimator.hpp` — added `<functional>`, `<map>`, `<memory>`, `<string>` alongside the existing `<cmath>` — `mru_transform/include/mru_transform/nodes/sea_surface_estimator.hpp`
+- [x] `nodes/chart_datum_node.hpp` — added `<chrono>`, `<exception>`, `<functional>`, `<memory>` alongside the existing `<cmath>`/`<filesystem>`/`<limits>`/`<optional>`/`<string>`/`<vector>` — `mru_transform/include/mru_transform/nodes/chart_datum_node.hpp`
+- [x] `nodes/tide_copier.hpp` — added `<functional>`; also moved the pre-existing `<string>` up into the std-include block ahead of the ROS includes to match the repo's newer-header convention — `mru_transform/include/mru_transform/nodes/tide_copier.hpp`
+- [x] `test/test_lifecycle_reconfigure.cpp` — added `<cstdint>` for `std::uint8_t` — `mru_transform/test/test_lifecycle_reconfigure.cpp`
+- [x] Verified each file's actual symbol usage against the triage inventory before adding (grep for `std::` per file); no discrepancies found — the triage's per-file list matched source exactly
+- [x] Verified with `gcc -fpreprocessed -dD -E` (strips comments, keeps string literals) that `std::overflow_error`/`std::invalid_argument` in `sea_surface_estimator.hpp` and the test appear only inside log-string literals, never in code — no `<stdexcept>` added, per the triage caution
+- [x] Clean rebuild (`mru_transform_interfaces` + `mru_transform`, packages-select) — succeeded; only pre-existing, unrelated warnings (a `geodesy` header parenthesization warning, an unused-parameter warning in `mru_transform.cpp`)
+- [x] Full test suite — 93 tests, 0 errors, 0 failures, 0 skipped (unchanged from baseline)
+- [x] No follow-up issue opened for the missing-linter cost evidence — already recorded in the Integrated Review entry itself, per explicit instruction
+
+### Next step
+`review-code` (re-review) on branch `feature/issue-34` / PR #40 — dispatch as a fresh-context sub-agent.
