@@ -826,3 +826,66 @@ policy change that `(min=0, max=0)` is now refused, and — new this pass — th
 `maximum_buffer_duration`/`minimum_buffer_duration`/`publish_rate`/
 `recalc_interval` now reject non-finite values that previously configured
 cleanly.
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-08-24 11:00 -04:00
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: changes-requested
+
+**Branch**: feature/issue-34 at `97948ba`
+**Mode**: pre-push
+**Depth**: Deep (scoped as round 3 recommended: a **confirmation read** of the fix pass, not a fourth full review)
+**Must-fix**: 2 | **Suggestions**: 1
+**Round**: 4 | **Ship**: recommended — both must-fixes are mechanical (a wrong test name in a comment; one claim to correct, with a working test already written and proven below). Must-fix count fell 3 → 3 → 4 → 2 and nothing found is a design or correctness concern. Fix these two and ship; do not run a fifth round.
+
+### The gate, run here
+
+No CI, no pre-commit, no registered linters (mru_transform#35), so this run is the whole gate.
+
+- **Clean rebuild** (`platforms_ws/build/mru_transform` + `install/mru_transform` removed first): **0 errors**. Three warnings, all outside changed files: `src/mru_transform.cpp:341` unused-parameter (untouched) and vendored `geodesy/geodesics.h:234` ×2. **0 warnings in any changed file** — the fix pass's claim confirmed.
+- `./platforms_ws/test.sh mru_transform` — **92 tests, 0 errors, 0 failures, 0 skipped** in ~10.6 s. Matches the reported 92 (86 before).
+- `ROS_LOCALHOST_ONLY is deprecated`: **0** occurrences.
+- Installed `include/mru_transform/mru_transform/` carries the 12 pre-existing headers and **no `nodes/`** — the install exclusion survives a clean rebuild.
+- 42 commits, all authored `Claude Code Agent <roland+claude-code@ccom.unh.edu>`; working tree verified clean after every mutation below.
+
+### The exit-path enumeration — audited cell by cell against source
+
+**The table holds, with one row overclaiming.** Verified independently, not read off the entry:
+
+- **`deactivate`** ✓ — `chart_datum_node::on_deactivate` resets both timers (the only things `on_activate` creates); `sea_surface_estimator`/`tide_copier` `on_activate` bodies are a bare `return LifecycleNode::on_activate(state)`, so there is nothing to release; `nav_sat_fix_to_velocity::on_deactivate` clears `last_navsatfix_`.
+- **`cleanup` / `shutdown` (all three source states) / `error`** ✓ — all four nodes now route to one `release_everything_on_configure_created()`. Every reset in each helper is null-safe and re-nulls, so one `on_shutdown` override is genuinely correct from `unconfigured`, `inactive` and `active`. Checked each helper member-by-member against its node's `on_configure`/`on_activate` allocation list: nothing allocated is outside a helper.
+- **`FAILURE`-return row — line numbers checked, not accepted.** `chart_datum_node`: `:143` and `:149` (the `publish_rate` / `recalc_interval` checks) both precede the first allocation, which is `setup_proj()` at `:194`; the datum-config `catch` at `:222` is the only return after it and calls `cleanup_proj()` + `vdatum_enabled_ = false` + `datum_entries_.clear()` before returning. `sea_surface_estimator`: `:112`, `:120`, `:138` all precede the first allocation at `:179`. `tide_copier` and `nav_sat_fix_to_velocity` have no `FAILURE` return at all (grep-confirmed). **Row is true.**
+- **`destructor` row — two of four cells overclaim.** See the suggestion below.
+
+### The two claims against round 3 — both verified by mutation, both stand
+
+Round 3's `tide_copier` result does **not** generalize, exactly as the pass says:
+
+- **`nav_sat_fix_to_velocity`'s guard is already pinned.** Deleted *only* the `PRIMARY_STATE_ACTIVE` check (`:132-134`), rebuilt, ran the suite: **`NavSatFixToVelocityRespectsLifecycleState` fails, alone** (92 tests, 1 failing case). It is pinned because the guard returns *before* `last_navsatfix_ = *msg` — something no publisher gate can do. Restored, tree clean.
+- **`sea_surface_estimator` was the real gap, and is now pinned.** Deleted only its guard (`:251-252`): **`SeaSurfaceEstimatorDoesNotBroadcastWhenInactive` fails, alone**. Confirmed at source that `transform_broadcaster_` is a plain `std::shared_ptr<tf2_ros::TransformBroadcaster>` (`sea_surface_estimator.hpp:588`) with no activation gate whatsoever — so the state check is the *only* gate this node has. Restored, tree clean.
+
+### The honesty claim about `tide_copier` / `chart_datum_node` — true, and worth having on the record
+
+**Confirmed: no in-process test can isolate either guard any more.** `tide_copier::tf_callback` has exactly one side effect, `tf_publisher_->publish()` through a `LifecyclePublisher` whose `publish()` is virtual and gates on `is_activated()` — so with the guard removed the observable behaviour in `inactive`/`unconfigured` is identical. `chart_datum_node::publish_callback` is reachable only from `publish_timer_`, which is created in `on_activate` and now released by `on_deactivate`, `on_cleanup`, `on_shutdown` **and** `on_error`, so no non-active state can dispatch it at all; its `tf_broadcaster_` sits inside that same gated region. Declining to manufacture a test that would only re-pin `on_shutdown` was the right call, and stating it plainly was better than a green box.
+
+### Findings
+- [ ] (must-fix) The comment justifying the guard names a test that **does not exist**: `NavSatFixToVelocityIgnoresFixesWhileInactive` appears nowhere in the repo (grepped whole tree). The test that actually pins it — verified by mutation above — is `NavSatFixToVelocityRespectsLifecycleState`. `tide_copier.hpp:83-84` gets the same construct right, naming `SeaSurfaceEstimatorDoesNotBroadcastWhenInactive`, which does exist. A maintainer following this comment to check the guard is load-bearing finds nothing and is left where round 3's must-fix 1 left them. One word — `mru_transform/include/mru_transform/nodes/nav_sat_fix_to_velocity.hpp:128`
+- [ ] (must-fix) **`on_error` IS testable in-process on `chart_datum_node`; the claim is over-generalized.** The pass's reasoning is scoped to `on_configure` bodies and is correct there — in all four nodes every `declare_parameter` precedes every allocation, so a type-mismatch override throws too early to strand anything, and the topic names are fixed. But the branch's own `on_error` comment names `on_activate` as the worse case, and that path *is* reachable: `publish_rate = 1e-10` is finite and > 0, so it passes `on_configure`'s new validation, and `1.0/1e-10 = 1e10 s` exceeds `std::chrono::nanoseconds::max()` (~9.22e9 s), so `rclcpp`'s `safe_cast_to_period_in_ns` throws `std::invalid_argument` out of `create_wall_timer`. **Proven, not argued**: a throwaway case (configure → activate with that override) produced `Caught exception in callback for transition 13`, then `on_error`'s own log line, state `1` (unconfigured), and both latched publishers released — the case **passed**, 93/93. This is the one node whose `on_error` release includes the PROJ context and both pipelines, i.e. the case the round-3 finding was actually about. Either add the ~25-line case (working code exists; it was run here) or narrow the recorded claim to "`on_configure` cannot be made to throw, and `on_activate` allocates nothing in the other three nodes" — but the current blanket "no test" is not accurate. Round 2's acceptance was likewise about `on_configure`, so it does not carry — `mru_transform/test/test_lifecycle_reconfigure.cpp`, `chart_datum_node.hpp:298-315`
+- [ ] (suggestion) **The `destructor` row's two `✓ nothing needed` cells are justified by an ordering the member declarations give only half of.** The helpers enforce two orderings — subscription before the members its callback dereferences, and listener before buffer — but reverse-order member destruction only reproduces the second. `sea_surface_estimator`: `odometry_subscription_` is declared at `:547`, before `transform_broadcaster_` `:588`, `tide_estimate_pub_` `:589`, `tf_buffer_` `:590`, `tf_listener_` `:591` — so the subscription is destroyed **last**, after every member its callback touches (the cited listener-before-buffer half is correct). `tide_copier`: `tf_subscription_` `:151` before `tf_publisher_` `:152` — the publisher is destroyed first, the exact inversion of the helper's stated order. Only `nav_sat_fix_to_velocity` is right by declaration (`velocity_publisher_` `:172`, `navsat_subscription_` `:174`). This is the same residual that made `~ChartDatumNode` call the helper — benign under the single-threaded executor every `main()` uses, a UAF under a composed multi-threaded one — so it is a consistency/truth gap, not a live bug. Either give those two nodes the same one-line destructor, or correct the two cells to say what the member order actually gives — `sea_surface_estimator.hpp:547,588-591`, `tide_copier.hpp:151-152`
+
+### Specialists
+- Static analysis: **not available** — no CI, no pre-commit, `ament_lint_auto_find_test_dependencies()` finds no registered linters (mru_transform#35). The clean build + full suite above is the gate and was run here.
+- Claude Adversarial: **not dispatched** — this round was scoped as a confirmation read of a specific set of claims, per round 3's own recommendation. Everything reported was verified by the lead directly against source or by experiment.
+- Copilot Adversarial: **not run** (instructed).
+- Local Adversarial: **skipped** — the calibrated model `qwen3.5:35b` is not pulled on this host (established round 2); not substituted.
+- Governance: **Documentation Accuracy — Concern**, both must-fixes (a comment naming a test that does not exist; a testability claim broader than what holds). Both are the same class this branch has been closing, and both are cheap. Quality Standard: satisfied — the exit-path class is closed at the cause and the enumeration is honest. Commit identity correct on 42/42. Repo still has no `.agents/README.md` and no root `AGENTS.md` (ADR-0017) — pre-existing, not this PR's work.
+- Plan drift: none this round; the reversed plan statements remain marked with the commit that reversed each.
+
+### Convergence — the plain answer
+The branch is done. The enumeration is the deliverable it was asked to be: I checked every cell against source and every `FAILURE`-return line number rather than accepting them, and the only row that overclaims is the destructor row, in a direction that is benign under this package's executors. Both round-3 corrections are real and I reproduced both by mutation. The one thing the pass got wrong is a claim about testability, not about the code — and the missing test is 25 lines that already exist and pass.
+
+Nothing found here questions the design, the fix, or the tests. Fix the two must-fixes and ship it.
+
+### Actions
+- [ ] Not pushed, no PR opened — the operator gates both.
