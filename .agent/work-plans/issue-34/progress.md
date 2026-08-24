@@ -127,3 +127,109 @@ logic reachable in the field, per the issue body.
 - [ ] (suggestion) Keep the `launch_testing` rejection but restate its grounds: the substantive reasons (typed assertion at the throwing transition, no process/service round trip) hold; "consistency with the existing test" is thin, since `test_subscribe_once` constructs a plain helper class, not a node with a `main()`. Note what in-process does not cover — the real executable and the `ros2 lifecycle set` service path the operator uses — `plan.md:74-99`
 - [ ] (suggestion) Pin the chosen semantics in the fixture, not just the absence of a throw: assert what `has_parameter`/`get_parameter` report after `cleanup`, and (with the guard approach) that a value set between `cleanup` and `configure` survives into the reconfigured node — that is the behaviour the field workflow depends on — `plan.md:109-137`
 - [ ] (suggestion) This repo has no `.agents/README.md`; noted as a gap per AGENTS.md, not work for this PR.
+
+## Implementation
+**Status**: complete
+**When**: 2026-08-23 23:41 -04:00
+**By**: Claude Opus
+
+**Plan**: `.agent/work-plans/issue-34/plan.md` at `9c9c2b2` (revised for the changes-requested review)
+**Branch**: feature/issue-34 at `fc393ec`
+**Commits**: 9 (plan revision + 4 mechanical extractions/fix pairs + test hardening)
+
+### Plan revision (step 1, committed before implementing)
+
+`9c9c2b2` rewrites the plan against every must-fix in `## Plan Review`:
+
+- **Decision 1 flipped to `has_parameter()` guards** at the declare site.
+  Recorded reasoning: undeclaring discards a value set with `ros2 param set`
+  (and nothing can be staged while unconfigured), so the reconfigure workflow
+  the issue exists to enable would still fail; it cannot fix the
+  failed-configure path; and the guard is the upstream (nav2) and in-house
+  convention (`udp_bridge`, `s57_grids` ×2, `helm_manager`,
+  `marine_control/control_server`, `manda_coverage`).
+- **Decision 2** names the `on_cleanup` target state explicitly, with
+  `s57_grids/grid_publisher.cpp` as the in-house model, and tabulates what each
+  of the four nodes actually released — correcting the previous claim that the
+  other three already released pub/sub. None of them did.
+- **Decision 3** adds the lifecycle-publisher bug to scope with its reasoning.
+- **Decision 5** (new) records that `tide_copier` had no build target at all.
+- Steps split into a mechanical move + a fix/test commit per node; the
+  `orientation_sensor.hpp` and `install(DIRECTORY include/ ...)` claims corrected.
+
+### What was built
+
+Four `LifecycleNode`s, each extracted to `include/mru_transform/nodes/*.hpp`
+(verbatim move + a defaulted `NodeOptions` ctor arg) and then fixed:
+
+| Node | Declares guarded | `on_cleanup` now releases | Lifecycle gate |
+|---|---|---|---|
+| `sea_surface_estimator` | 7 | + odom subscription, `tide_estimate` pub, TF broadcaster, `logged_lever_arm_` | already had one |
+| `chart_datum_node` | 11 | + 3 latched publishers, both timers | n/a (timer-driven) |
+| `nav_sat_fix_to_velocity` | 2 | first `on_cleanup`: pub, sub, **`last_navsatfix_`** | added |
+| `tide_copier` | 4 | first real `on_cleanup`: pub, sub | added |
+
+Publishers in `tide_copier` and `nav_sat_fix_to_velocity` changed from
+`rclcpp::Publisher<T>::SharedPtr` to `LifecyclePublisher<T>::SharedPtr`, and
+both callbacks now return unless `PRIMARY_STATE_ACTIVE`.
+`nav_sat_fix_to_velocity`'s guard returns *before* touching `last_navsatfix_`,
+so the stale fix is rejected by the `maximum_interval_` check on re-activation
+rather than seeding a gap-spanning velocity.
+
+`chart_datum_node.cpp`'s file-scope `namespace fs = std::filesystem` alias was
+dropped in favour of qualified use: `install(DIRECTORY include/ ...)` ships the
+new header, and a bare `fs` alias would leak into every includer.
+
+`tide_copier` gained the `add_executable`/`install` it never had —
+`launch/tide_copier_launch.py` launches `executable='tide_copier'`, which was
+never built, so that launch file could only ever have failed. This PR is the
+first time `tide_copier.cpp` compiles.
+
+### Findings worth carrying forward
+
+- **`rclcpp_lifecycle` CATCHES exceptions thrown by transition callbacks.**
+  Verified empirically by re-introducing the unguarded declares: the node logs
+  `Caught exception in callback for transition 10 / Original error: parameter
+  'sea_surface_frame' has already been declared` and reports ERROR — the
+  exception never escapes `configure()`. `ASSERT_NO_THROW` alone therefore does
+  **not** detect this bug; under the regression the parameter-survival test
+  passed while every re-configure was in fact failing. Commit `fc393ec` adds a
+  lifecycle-state assertion after every re-configure in the fixture, which is
+  what actually catches it. Anyone testing a lifecycle transition in this
+  workspace should assert the resulting state, not just the absence of a throw.
+- **The deactivated-`tide_copier` bug is real and reproduced**, not merely
+  argued: with the pre-fix publisher type and no state check, the new test
+  fails three times over — "a configured-but-inactive node copied the tide into
+  /tf", "a deactivated node kept copying", "a cleaned-up node kept copying".
+
+### Verification
+
+Negative check first (the fix's own regression test earning its place):
+with the guards stripped from `sea_surface_estimator`, both its tests fail; with
+the pre-fix publisher/gate/cleanup restored in `tide_copier`,
+`TideCopierRespectsLifecycleState` fails on all three lifecycle phases. Both
+were then restored and the suite re-run green.
+
+- `./platforms_ws/build.sh mru_transform` — **pass** (no new warnings; the two
+  pre-existing ones are in vendored `geodesy` and untouched `mru_transform.cpp`)
+- `./platforms_ws/test.sh mru_transform` — **82 tests, 0 errors, 0 failures,
+  0 skipped** (70 before this PR; +12 in `test_lifecycle_reconfigure`)
+- `test_lifecycle_reconfigure`: 12/12 pass in 2.9 s — 4 reconfigure cycles,
+  4 parameter-survival, `ChartDatumNodeReconfigureUsesTheNewValue`,
+  `ChartDatumNodeRecoversFromFailedConfigure`, and the two live pub/sub
+  lifecycle-gate tests.
+
+This repo has no CI; the local run above is the only gate.
+
+### Actions
+- [ ] Not pushed — the host performs pushes. PR body should carry the
+      lifecycle-publisher fix (decision 3) and the `tide_copier` build target
+      (decision 5) as scope beyond the issue's original text.
+- [ ] Agent-instruction candidates (operator's call, not applied):
+      `.agent/knowledge/ros2_development_patterns.md` could gain notes on the
+      declare-if-not-declared guard, on `rclcpp::Publisher::publish` being
+      non-virtual (so holding a lifecycle publisher by the base type silently
+      bypasses the activation gate), and on lifecycle transition tests needing
+      a state assertion because the FSM swallows callback exceptions.
+- [ ] This repo has no `.agents/README.md` (noted by the plan review); still a
+      gap, still not work for this PR.
