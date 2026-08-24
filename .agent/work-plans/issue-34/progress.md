@@ -233,3 +233,46 @@ This repo has no CI; the local run above is the only gate.
       a state assertion because the FSM swallows callback exceptions.
 - [ ] This repo has no `.agents/README.md` (noted by the plan review); still a
       gap, still not work for this PR.
+
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-08-23 23:50 -04:00
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: changes-requested
+
+**Branch**: feature/issue-34 at `7437a3f`
+**Mode**: pre-push
+**Depth**: Deep (reason: 2296 insertions / 12 files, lifecycle + resource-teardown semantics across four managed nodes)
+**Must-fix**: 3 | **Suggestions**: 7
+**Round**: 1 | **Ship**: continue — three must-fixes at round 1, one a resource leak on the retry-after-FAILURE path this PR's own test blesses as the supported recovery.
+
+### Independently verified (not taken from the Implementation entry)
+
+- Header extractions are **pure**. Diffed the removed `.cpp` lines against the added `.hpp` lines for all four moves: the only deltas are include guards, the defaulted `NodeOptions` ctor arg, `explicit` on `ChartDatumNode`, and the `namespace fs` alias replaced by qualified `std::filesystem`. No behaviour hid inside the 400/558-line moves.
+- **`rclcpp_lifecycle` does swallow transition-callback exceptions.** Restored the unguarded declares (`git show e5dae40:...sea_surface_estimator.hpp`): the node logs `Caught exception in callback for transition 10 / Original error: parameter 'sea_surface_frame' has already been declared`, `configure()` does **not** throw, and the two sea_surface tests fail on the *state* assertions at `test_lifecycle_reconfigure.cpp:59` and `:152`. The `ASSERT_NO_THROW`-is-not-enough claim is correct.
+- **Pre-fix `tide_copier` fails `TideCopierRespectsLifecycleState` three times** ("configured-but-inactive", "deactivated", "cleaned-up"), plus `TideCopierReconfigures` and `TideCopierKeepsOperatorParameter`. Both mutations restored; tree verified clean.
+- **Clean rebuild from scratch: 0 errors.** 3 warnings, all in untouched `src/mru_transform.cpp` and vendored `geodesy/geodesics.h` — none in changed files.
+- **82 tests, 0 failures**, `test_lifecycle_reconfigure` = 12 cases (so 70 before). Package suite runs in ~8.7 s.
+- `tide_copier` builds and installs to `lib/mru_transform/tide_copier`, matching `executable='tide_copier'` in `launch/tide_copier_launch.py`; `tf2_msgs` was already a `<depend>`. The launch file works for the first time.
+- Every publishing path is gated: `sea_surface_estimator` and both new gates check `PRIMARY_STATE_ACTIVE` at the top of the sole publish path; `chart_datum_node` publishes only from timers created in `on_activate` and reset in both `on_deactivate` and `on_cleanup`. `get_current_state()` is safe from a callback (the returned `State::id()` takes the same recursive mutex a transition holds) and cannot alter ACTIVE behaviour.
+
+### Findings
+- [ ] (must-fix) PROJ context + both pipelines leak on the `FAILURE` return after `setup_proj()` succeeded; the retry `configure` overwrites the pointers and leaks again each time — `mru_transform/include/mru_transform/nodes/chart_datum_node.hpp:176-195`
+- [ ] (must-fix) Comment claims the ACTIVE guard makes the pre-deactivation fix "too old for the maximum_interval_ check" — true only when the inactive gap exceeds 2 s; a deactivate→activate inside 2 s does publish a velocity across the muted gap. Add an `on_deactivate` that clears `last_navsatfix_`, or correct the comment — `mru_transform/include/mru_transform/nodes/nav_sat_fix_to_velocity.hpp:67-72`
+- [ ] (must-fix) `odometry_buffer_.begin()` is dereferenced after a prune loop that can empty the map: a negative `maximum_buffer_duration` erases the just-inserted sample and the deref is UB. Neither buffer duration is validated, unlike `tide_range_margin_` here and `publish_rate`/`recalc_interval` in the sibling node. The guard sweep is what makes a runtime `ros2 param set` reach this — `mru_transform/include/mru_transform/nodes/sea_surface_estimator.hpp:183-184`
+- [ ] (suggestion) Deactivate leaves stale state that re-activation acts on: `odometry_buffer_` survives (30 s default window, so the first post-activation average spans the deactivation and reaches `map_tide`), and `chart_datum_node`'s validity flags/cached datum survive while `on_activate`'s `recalc_callback()` returns early on the TF lookup that a just-rebuilt buffer usually fails. Pre-existing gates — worth a follow-up issue, not scope creep here — `sea_surface_estimator.hpp:111`, `chart_datum_node.hpp:236`
+- [ ] (suggestion) No test pins the new `on_cleanup` releases for two nodes: deleting `odometry_subscription_.reset()`/`tide_estimate_pub_.reset()` or `chart_datum`'s `publish_timer_.reset(); recalc_timer_.reset();` leaves all 12 tests green — `mru_transform/test/test_lifecycle_reconfigure.cpp`
+- [ ] (suggestion) Tests use absolute `/tf`, `/fix`, `/velocity` on the default domain and prove negatives with `EXPECT_TRUE(copies.empty())`; unrelated `/tf` traffic on the dev host fails them, and `get_subscription_count() >= 2` can be satisfied by an external subscriber, making a negative check vacuous. Set `ROS_LOCALHOST_ONLY=1` + a unique `ROS_DOMAIN_ID` via `set_tests_properties`, or namespace the topics — `mru_transform/test/test_lifecycle_reconfigure.cpp:373-436`
+- [ ] (suggestion) Negative assertions use fixed 300-500 ms `spin_for` windows while the positives get 5 s `spin_until` budgets — on a loaded box the negatives can pass vacuously. A round-trip sentinel would make them deterministic — `mru_transform/test/test_lifecycle_reconfigure.cpp:287,322,415`
+- [ ] (suggestion) `lifecycle_msgs` is included directly by all four installed headers and the test but is not a `<depend>` / `find_package` — it compiles only through `rclcpp_lifecycle`'s transitive export (REP-149) — `mru_transform/package.xml`, `mru_transform/CMakeLists.txt`
+- [ ] (suggestion) `install(DIRECTORY include/ ...)` now ships four global-namespace node classes as public API, and `chart_datum_node.hpp` pulls `proj.h`, which is not exported — so the headers ship but cannot be consumed downstream. Either `PATTERN "nodes" EXCLUDE` from the install or put the classes in `namespace mru_transform` (the "no `ament_export_*` change needed" conclusion from the plan review stands; this is the residual wart) — `mru_transform/CMakeLists.txt:100-103`
+- [ ] (suggestion) Three `on_cleanup` comments assert that resetting a subscription/timer means no callback can be in flight; `shared_ptr::reset()` provides no such synchronization. It holds only under the single-threaded executor each `main()` uses — worth naming that precondition now that the ctors take `NodeOptions` and the headers are installed — `tide_copier.hpp:48`, `sea_surface_estimator.hpp:113`, `chart_datum_node.hpp:245`
+
+### Specialists
+- Static analysis: **not available** — this repo has no CI and no pre-commit config, and `ament_lint_auto_find_test_dependencies()` finds no linters (only `ament_cmake_gtest` is a `test_depend`; mru_transform#35). The clean build + full test run above is the only gate, and it was run rather than quoted.
+- Claude Adversarial: 2 passes (Lens A logic/correctness, Lens B systemic/lifecycle). All three must-fixes are cross-pass confirmed and were re-verified against source by the lead.
+- Copilot Adversarial: off (not requested).
+- Local Adversarial: **skipped** — the local Ollama server is down (llama-server killed); not retried per instruction.
+- Governance: ADR-0008 pass (the `has_parameter()` guard is the nav2 + in-house convention; the `LifecyclePublisher` change restores the activation gate a managed node owes its operator). Commit identity correct on all 14 commits. Atomic commits honoured. Doc impact: `README.md` carries no node inventory, so the new `tide_copier` target owes no README change — the plan's "no stale docs" call is correct. Repo still has no `.agents/README.md` and no root `AGENTS.md` (ADR-0017) — pre-existing gaps, not this PR's work.
+- Plan drift: none material. The two small extractions were combined into one commit (plan said eight, actual nine including the plan revision); every plan-listed file changed and no unplanned file did.
