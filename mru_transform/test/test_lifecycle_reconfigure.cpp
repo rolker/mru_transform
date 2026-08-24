@@ -197,13 +197,20 @@ TEST_F(LifecycleReconfigureTest, SeaSurfaceEstimatorKeepsOperatorParameter)
 }
 
 // The two buffer durations bound the averaging window and were the only
-// numeric parameters in either node with no validation at all. A non-positive
-// maximum prunes the buffer empty on every sample -- including the sample just
-// inserted -- and the callback then dereferenced odometry_buffer_.begin() on an
-// empty map, which is undefined behaviour, not a missing publication. A minimum
-// at or above the maximum can never be satisfied, so the node would sit there
-// silently never publishing a tide. Both must fail the transition, and the
-// corrected value must be what the retry reads.
+// numeric parameters in either node with no validation at all. The three cases
+// below are rejected for two different reasons:
+//   * a NEGATIVE maximum is a correctness bug -- it puts the prune cutoff after
+//     `now`, erasing the sample just inserted, and the callback then
+//     dereferenced odometry_buffer_.begin() on an empty map (undefined
+//     behaviour, not a missing publication);
+//   * a minimum at or above the maximum is rejected as POLICY. (0, 0) is the
+//     boundary and it did work before this change -- the prune compares `<`, so
+//     a zero maximum keeps the just-inserted sample and the node published the
+//     instantaneous height with no smoothing. This node exists to average, and
+//     an unsmoothed single-sample tide feeds every sounding, so it is refused.
+//     Every other minimum >= maximum pair could never be satisfied either way.
+// All must fail the transition, and the corrected value must be what the retry
+// reads.
 TEST_F(LifecycleReconfigureTest, SeaSurfaceEstimatorRejectsUnusableBufferDurations)
 {
   {
@@ -236,6 +243,25 @@ TEST_F(LifecycleReconfigureTest, SeaSurfaceEstimatorRejectsUnusableBufferDuratio
     EXPECT_EQ(node->get_current_state().id(), kUnconfigured)
       << "a minimum_buffer_duration at the maximum was accepted; the window "
          "can never be long enough and the node would never publish";
+  }
+
+  // The boundary, pinned because it is a POLICY call rather than a mechanical
+  // one: (0, 0) used to work as an unsmoothed single-sample tide, and this
+  // branch deliberately refuses it. If the policy is ever revisited, this is
+  // the case that has to be revisited with it.
+  {
+    auto options = isolated_options();
+    options.parameter_overrides(
+      {
+        rclcpp::Parameter("minimum_buffer_duration", 0.0),
+        rclcpp::Parameter("maximum_buffer_duration", 0.0),
+      });
+    auto node = std::make_shared<SeaSurfaceEstimator>(options);
+
+    ASSERT_NO_THROW(node->configure());
+    EXPECT_EQ(node->get_current_state().id(), kUnconfigured)
+      << "(0, 0) was accepted; an unsmoothed single-sample tide is refused as "
+         "policy, not because the buffer would empty";
   }
 }
 

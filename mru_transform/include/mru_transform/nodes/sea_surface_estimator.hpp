@@ -52,16 +52,36 @@ public:
 
     // Both durations bound the averaging window and neither was validated,
     // unlike tide_range_margin below and publish_rate / recalc_interval in
-    // chart_datum_node. A non-positive maximum prunes the buffer empty on every
-    // sample -- including the sample just inserted, leaving the callback to
-    // dereference odometry_buffer_.begin() on an empty map. A minimum at or
-    // above the maximum can never be satisfied, so the node would silently
-    // never publish a tide. Both are operator errors worth failing the
-    // transition for: configure can be retried, and the parameters survive the
-    // failure so the corrected value is what the retry reads. (#34)
-    if (!(maximum_buffer_duration_ > 0.0)) {
+    // chart_datum_node. The two rejections below are rejections for DIFFERENT
+    // reasons, and it is worth being exact about which is which.
+    //
+    // A NEGATIVE maximum is a correctness bug. The prune erases while
+    // `begin()->first < now - maximum`, so a negative maximum puts the cutoff
+    // *after* `now` and erases the sample just inserted; the callback then
+    // dereferenced odometry_buffer_.begin() on an empty map, which is
+    // undefined behaviour, not a missing publication. (A non-finite maximum is
+    // rejected by the same check, which is written as a negated >= so NaN
+    // fails it.)
+    //
+    // A ZERO maximum is NOT that, and the earlier claim that it emptied the
+    // buffer was simply wrong: the comparison is `<`, so at maximum == 0 the
+    // cutoff equals `now`, the just-inserted key is exactly `now`, and the
+    // sample is KEPT. (minimum 0, maximum 0) was a working configuration
+    // before this change -- "publish the instantaneous height, no smoothing".
+    // It is rejected below as POLICY, not because of any mechanism: this node
+    // exists to average, and an unsmoothed single-sample tide on the path that
+    // feeds every sounding is not a configuration anyone should be running.
+    // Every other minimum >= maximum pair could additionally never be
+    // satisfied, so the node would sit there silently never publishing a tide.
+    //
+    // Both fail the transition rather than being clamped: configure can be
+    // retried, and the parameters survive the failure so the corrected value
+    // is what the retry reads. (#34)
+    if (!(maximum_buffer_duration_ >= 0.0)) {
       RCLCPP_ERROR(
-        get_logger(), "maximum_buffer_duration must be > 0 (got %.3f)",
+        get_logger(),
+        "maximum_buffer_duration must be a non-negative number (got %.3f); "
+        "the retention prune would erase every sample as it arrived",
         maximum_buffer_duration_);
       return CallbackReturn::FAILURE;
     }
@@ -76,7 +96,9 @@ public:
       RCLCPP_ERROR(
         get_logger(),
         "minimum_buffer_duration (%.3f) must be < maximum_buffer_duration "
-        "(%.3f); the averaging window could never be long enough and the node "
+        "(%.3f). (0, 0) does work -- it publishes a single unsmoothed sample -- "
+        "but this node exists to average, so it is rejected as policy; any "
+        "other minimum >= maximum could never be satisfied at all and the node "
         "would never publish",
         minimum_buffer_duration_, maximum_buffer_duration_);
       return CallbackReturn::FAILURE;
