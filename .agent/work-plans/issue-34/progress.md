@@ -258,16 +258,16 @@ This repo has no CI; the local run above is the only gate.
 - Every publishing path is gated: `sea_surface_estimator` and both new gates check `PRIMARY_STATE_ACTIVE` at the top of the sole publish path; `chart_datum_node` publishes only from timers created in `on_activate` and reset in both `on_deactivate` and `on_cleanup`. `get_current_state()` is safe from a callback (the returned `State::id()` takes the same recursive mutex a transition holds) and cannot alter ACTIVE behaviour.
 
 ### Findings
-- [ ] (must-fix) PROJ context + both pipelines leak on the `FAILURE` return after `setup_proj()` succeeded; the retry `configure` overwrites the pointers and leaks again each time — `mru_transform/include/mru_transform/nodes/chart_datum_node.hpp:176-195`
-- [ ] (must-fix) Comment claims the ACTIVE guard makes the pre-deactivation fix "too old for the maximum_interval_ check" — true only when the inactive gap exceeds 2 s; a deactivate→activate inside 2 s does publish a velocity across the muted gap. Add an `on_deactivate` that clears `last_navsatfix_`, or correct the comment — `mru_transform/include/mru_transform/nodes/nav_sat_fix_to_velocity.hpp:67-72`
-- [ ] (must-fix) `odometry_buffer_.begin()` is dereferenced after a prune loop that can empty the map: a negative `maximum_buffer_duration` erases the just-inserted sample and the deref is UB. Neither buffer duration is validated, unlike `tide_range_margin_` here and `publish_rate`/`recalc_interval` in the sibling node. The guard sweep is what makes a runtime `ros2 param set` reach this — `mru_transform/include/mru_transform/nodes/sea_surface_estimator.hpp:183-184`
-- [ ] (suggestion) Deactivate leaves stale state that re-activation acts on: `odometry_buffer_` survives (30 s default window, so the first post-activation average spans the deactivation and reaches `map_tide`), and `chart_datum_node`'s validity flags/cached datum survive while `on_activate`'s `recalc_callback()` returns early on the TF lookup that a just-rebuilt buffer usually fails. Pre-existing gates — worth a follow-up issue, not scope creep here — `sea_surface_estimator.hpp:111`, `chart_datum_node.hpp:236`
-- [ ] (suggestion) No test pins the new `on_cleanup` releases for two nodes: deleting `odometry_subscription_.reset()`/`tide_estimate_pub_.reset()` or `chart_datum`'s `publish_timer_.reset(); recalc_timer_.reset();` leaves all 12 tests green — `mru_transform/test/test_lifecycle_reconfigure.cpp`
-- [ ] (suggestion) Tests use absolute `/tf`, `/fix`, `/velocity` on the default domain and prove negatives with `EXPECT_TRUE(copies.empty())`; unrelated `/tf` traffic on the dev host fails them, and `get_subscription_count() >= 2` can be satisfied by an external subscriber, making a negative check vacuous. Set `ROS_LOCALHOST_ONLY=1` + a unique `ROS_DOMAIN_ID` via `set_tests_properties`, or namespace the topics — `mru_transform/test/test_lifecycle_reconfigure.cpp:373-436`
-- [ ] (suggestion) Negative assertions use fixed 300-500 ms `spin_for` windows while the positives get 5 s `spin_until` budgets — on a loaded box the negatives can pass vacuously. A round-trip sentinel would make them deterministic — `mru_transform/test/test_lifecycle_reconfigure.cpp:287,322,415`
-- [ ] (suggestion) `lifecycle_msgs` is included directly by all four installed headers and the test but is not a `<depend>` / `find_package` — it compiles only through `rclcpp_lifecycle`'s transitive export (REP-149) — `mru_transform/package.xml`, `mru_transform/CMakeLists.txt`
-- [ ] (suggestion) `install(DIRECTORY include/ ...)` now ships four global-namespace node classes as public API, and `chart_datum_node.hpp` pulls `proj.h`, which is not exported — so the headers ship but cannot be consumed downstream. Either `PATTERN "nodes" EXCLUDE` from the install or put the classes in `namespace mru_transform` (the "no `ament_export_*` change needed" conclusion from the plan review stands; this is the residual wart) — `mru_transform/CMakeLists.txt:100-103`
-- [ ] (suggestion) Three `on_cleanup` comments assert that resetting a subscription/timer means no callback can be in flight; `shared_ptr::reset()` provides no such synchronization. It holds only under the single-threaded executor each `main()` uses — worth naming that precondition now that the ctors take `NodeOptions` and the headers are installed — `tide_copier.hpp:48`, `sea_surface_estimator.hpp:113`, `chart_datum_node.hpp:245`
+- [x] (must-fix) PROJ context + both pipelines leak on the `FAILURE` return after `setup_proj()` succeeded; the retry `configure` overwrites the pointers and leaks again each time — `mru_transform/include/mru_transform/nodes/chart_datum_node.hpp:176-195`
+- [x] (must-fix) Comment claims the ACTIVE guard makes the pre-deactivation fix "too old for the maximum_interval_ check" — true only when the inactive gap exceeds 2 s; a deactivate→activate inside 2 s does publish a velocity across the muted gap. Add an `on_deactivate` that clears `last_navsatfix_`, or correct the comment — `mru_transform/include/mru_transform/nodes/nav_sat_fix_to_velocity.hpp:67-72`
+- [x] (must-fix) `odometry_buffer_.begin()` is dereferenced after a prune loop that can empty the map: a negative `maximum_buffer_duration` erases the just-inserted sample and the deref is UB. Neither buffer duration is validated, unlike `tide_range_margin_` here and `publish_rate`/`recalc_interval` in the sibling node. The guard sweep is what makes a runtime `ros2 param set` reach this — `mru_transform/include/mru_transform/nodes/sea_surface_estimator.hpp:183-184`
+- [x] (suggestion) Deactivate leaves stale state that re-activation acts on: `odometry_buffer_` survives (30 s default window, so the first post-activation average spans the deactivation and reaches `map_tide`), and `chart_datum_node`'s validity flags/cached datum survive while `on_activate`'s `recalc_callback()` returns early on the TF lookup that a just-rebuilt buffer usually fails. Pre-existing gates — worth a follow-up issue, not scope creep here — `sea_surface_estimator.hpp:111`, `chart_datum_node.hpp:236` (deferred: filed as mru_transform#37; the analogous `nav_sat_fix_to_velocity` case was a must-fix and is fixed here)
+- [x] (suggestion) No test pins the new `on_cleanup` releases for two nodes: deleting `odometry_subscription_.reset()`/`tide_estimate_pub_.reset()` or `chart_datum`'s `publish_timer_.reset(); recalc_timer_.reset();` leaves all 12 tests green — `mru_transform/test/test_lifecycle_reconfigure.cpp`
+- [x] (suggestion) Tests use absolute `/tf`, `/fix`, `/velocity` on the default domain and prove negatives with `EXPECT_TRUE(copies.empty())`; unrelated `/tf` traffic on the dev host fails them, and `get_subscription_count() >= 2` can be satisfied by an external subscriber, making a negative check vacuous. Set `ROS_LOCALHOST_ONLY=1` + a unique `ROS_DOMAIN_ID` via `set_tests_properties`, or namespace the topics — `mru_transform/test/test_lifecycle_reconfigure.cpp:373-436`
+- [x] (suggestion) Negative assertions use fixed 300-500 ms `spin_for` windows while the positives get 5 s `spin_until` budgets — on a loaded box the negatives can pass vacuously. A round-trip sentinel would make them deterministic — `mru_transform/test/test_lifecycle_reconfigure.cpp:287,322,415` (deferred: filed as mru_transform#38; the isolation half of the same weakness is fixed here, so the negatives are no longer breakable or satisfiable by outside traffic)
+- [x] (suggestion) `lifecycle_msgs` is included directly by all four installed headers and the test but is not a `<depend>` / `find_package` — it compiles only through `rclcpp_lifecycle`'s transitive export (REP-149) — `mru_transform/package.xml`, `mru_transform/CMakeLists.txt`
+- [x] (suggestion) `install(DIRECTORY include/ ...)` now ships four global-namespace node classes as public API, and `chart_datum_node.hpp` pulls `proj.h`, which is not exported — so the headers ship but cannot be consumed downstream. Either `PATTERN "nodes" EXCLUDE` from the install or put the classes in `namespace mru_transform` (the "no `ament_export_*` change needed" conclusion from the plan review stands; this is the residual wart) — `mru_transform/CMakeLists.txt:100-103`
+- [x] (suggestion) Three `on_cleanup` comments assert that resetting a subscription/timer means no callback can be in flight; `shared_ptr::reset()` provides no such synchronization. It holds only under the single-threaded executor each `main()` uses — worth naming that precondition now that the ctors take `NodeOptions` and the headers are installed — `tide_copier.hpp:48`, `sea_surface_estimator.hpp:113`, `chart_datum_node.hpp:245`
 
 ### Specialists
 - Static analysis: **not available** — this repo has no CI and no pre-commit config, and `ament_lint_auto_find_test_dependencies()` finds no linters (only `ament_cmake_gtest` is a `test_depend`; mru_transform#35). The clean build + full test run above is the only gate, and it was run rather than quoted.
@@ -276,3 +276,85 @@ This repo has no CI; the local run above is the only gate.
 - Local Adversarial: **skipped** — the local Ollama server is down (llama-server killed); not retried per instruction.
 - Governance: ADR-0008 pass (the `has_parameter()` guard is the nav2 + in-house convention; the `LifecyclePublisher` change restores the activation gate a managed node owes its operator). Commit identity correct on all 14 commits. Atomic commits honoured. Doc impact: `README.md` carries no node inventory, so the new `tide_copier` target owes no README change — the plan's "no stale docs" call is correct. Repo still has no `.agents/README.md` and no root `AGENTS.md` (ADR-0017) — pre-existing gaps, not this PR's work.
 - Plan drift: none material. The two small extractions were combined into one commit (plan said eight, actual nine including the plan revision); every plan-listed file changed and no unplanned file did.
+
+## Implementation
+**Status**: complete
+**When**: 2026-08-24 00:12 -04:00
+**By**: Claude Code Agent (Claude Opus)
+
+**Branch**: feature/issue-34 at `fa896a0`
+**Addressed**: `## Local Review (Pre-Push)` (2026-08-23 23:50 -04:00, branch at `7437a3f`) — 3 must-fix + 7 suggestions
+**Commits**: `cac8498`, `9bcecf9`, `a529e69`, `77e7542`, `45be3e8`, `f5544f5`, `d6dd5d1`, `fa896a0`
+
+### Decisions worth recording
+
+- **Must-fix 2 (`last_navsatfix_`) — clear on deactivate, don't correct the
+  comment.** The review offered either. Deactivation is the operator muting the
+  node, and an interval it was muted for must not come back out as motion; the
+  ACTIVE guard alone leaves the pre-deactivation fix inside the 2 s
+  `maximum_interval_` window, so a quick cycle published a velocity averaged
+  across the mute. The comment now points at what actually gives the guarantee
+  rather than at the age check, which a sub-2 s cycle passes.
+- **Must-fix 3 — validate at configure AND check the invariant at the deref.**
+  `on_configure` now fails the transition on a non-positive
+  `maximum_buffer_duration` (which prunes away the sample just inserted) and on
+  a `minimum_buffer_duration` at or above it (a window that can never be long
+  enough, so the node would silently never publish), and clamps a negative
+  minimum to zero exactly as `tide_range_margin` is clamped. FAILURE rather
+  than clamping for the two unusable cases, matching the sibling's
+  `publish_rate` / `recalc_interval` treatment: configure is retryable and the
+  parameters survive the failure, so the corrected value is what the retry
+  reads. The callback still checks `odometry_buffer_.empty()` — the deref was
+  undefined behaviour, not a missing publication, so the invariant is checked
+  rather than assumed.
+- **`chart_datum_node`'s `on_cleanup` timer resets are not pinned by a test and
+  cannot be.** Every legal route to `cleanup` passes through `on_deactivate`,
+  which already resets both timers, or never activated at all. They stay as
+  defensive teardown; the *publishers* released in the same callback are what
+  the new test pins.
+
+### Actions
+- [x] PROJ context + both pipelines leak on the `FAILURE` return after `setup_proj()` — `chart_datum_node.hpp:176-195` — `cac8498`
+- [x] Comment claims a guarantee the ACTIVE guard does not give; deactivate→activate inside 2 s published across the muted gap — `nav_sat_fix_to_velocity.hpp:67-72` — `77e7542`
+- [x] `odometry_buffer_.begin()` dereferenced after a prune that can empty the map; neither buffer duration validated — `sea_surface_estimator.hpp:183-184` — `a529e69`
+- [x] Deactivate leaves stale state that re-activation acts on (`odometry_buffer_`, `chart_datum_node`'s validity flags) — (deferred: the review classed it a follow-up, not this PR's scope; filed as [mru_transform#37](https://github.com/rolker/mru_transform/issues/37). The one case the review called a must-fix — `nav_sat_fix_to_velocity` — is fixed above.)
+- [x] No test pins the new `on_cleanup` releases for two nodes — `test_lifecycle_reconfigure.cpp` — `45be3e8`
+- [x] Tests use absolute `/tf`, `/fix`, `/velocity` on the default domain — `test_lifecycle_reconfigure.cpp:373-436` — `9bcecf9`
+- [x] Negative assertions use fixed 300-500 ms spin windows — (deferred: filed as [mru_transform#38](https://github.com/rolker/mru_transform/issues/38). The isolation half of the same weakness is fixed in `9bcecf9`, so the negatives can no longer be broken or vacuously satisfied by outside traffic; making them deterministic means restructuring each negative phase into a sentinel round trip, which is its own change.)
+- [x] `lifecycle_msgs` included but not depended on — `package.xml`, `CMakeLists.txt` — `f5544f5`
+- [x] `install(DIRECTORY include/ ...)` ships four node classes that cannot be consumed — `CMakeLists.txt:100-103` — `d6dd5d1` (chose `PATTERN "nodes" EXCLUDE`: they are a test seam, not API)
+- [x] Three `on_cleanup` comments assert a synchronization `shared_ptr::reset()` does not provide — `fa896a0` (verified all four `nodes/*.cpp` call `rclcpp::spin()`, i.e. a single-threaded executor)
+
+### Verification (run, not quoted)
+
+This repo has no CI, no pre-commit config and no registered linters
+(mru_transform#35), so this local run is the only gate.
+
+- **Clean rebuild** (`build/` + `install/` for the package removed first) —
+  0 errors. The only warning outside vendored `geodesy` is the pre-existing
+  unused-parameter in untouched `src/mru_transform.cpp`; none in changed files.
+- `./platforms_ws/test.sh mru_transform` — **85 tests, 0 errors, 0 failures,
+  0 skipped** (82 before this round; +3 in `test_lifecycle_reconfigure`, now
+  15 cases in 3.4 s — comfortably inside the test's 60 s ctest timeout).
+- **Every new negative check re-confirmed against the bug it targets**, by
+  mutation and restore:
+  - removing the new `on_deactivate` from `nav_sat_fix_to_velocity` →
+    `NavSatFixToVelocityRespectsLifecycleState` fails on "a velocity was
+    computed across the deactivation gap";
+  - deleting `odometry_subscription_.reset()` / `tide_estimate_pub_.reset()`
+    and `chart_datum_node`'s three publisher resets → both new cleanup cases
+    fail, reporting the endpoint counts they saw;
+  - the re-namespaced pre-existing negatives still pass, and the suite was
+    re-run green after each restore (`git status` clean).
+- **Header install verified empirically**: removed the stale installed
+  `nodes/` directory, rebuilt, confirmed it is not re-created.
+- The PROJ leak has no test: reaching it needs a real VDatum grid directory
+  plus a malformed datum config, and the leak is invisible to the process
+  under test. Reviewed by reading `setup_proj` / `cleanup_proj` instead.
+
+### Not pushed
+The host performs pushes. PR body should still carry the lifecycle-publisher
+fix and the `tide_copier` build target as scope beyond the issue's text, and
+can now also point at the two follow-ups filed from this round
+([#37](https://github.com/rolker/mru_transform/issues/37),
+[#38](https://github.com/rolker/mru_transform/issues/38)).
