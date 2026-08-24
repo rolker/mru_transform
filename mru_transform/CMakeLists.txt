@@ -425,9 +425,12 @@ if(BUILD_TESTING)
     datum_config
     rclcpp::rclcpp
     rclcpp_lifecycle::rclcpp_lifecycle
+    ${geographic_msgs_TARGETS}
     ${geometry_msgs_TARGETS}
     ${nav_msgs_TARGETS}
+    ${sensor_msgs_TARGETS}
     ${std_msgs_TARGETS}
+    ${tf2_msgs_TARGETS}
     tf2::tf2
     tf2_ros::tf2_ros
     PkgConfig::PROJ
