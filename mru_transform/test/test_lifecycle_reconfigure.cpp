@@ -37,10 +37,12 @@ constexpr std::uint8_t kUnconfigured =
 constexpr std::uint8_t kInactive =
   lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE;
 
-// configure -> cleanup -> configure. The second configure is what used to
-// throw. The state assertions matter as much as the NO_THROW: were the
-// exception ever swallowed by the FSM, the node would land in a state other
-// than `inactive` rather than raising here.
+// configure -> cleanup -> configure. The second configure is the one that
+// breaks. NOTE: rclcpp_lifecycle CATCHES an exception thrown by a transition
+// callback, logs "Caught exception in callback for transition 10" and reports
+// ERROR, so the ParameterAlreadyDeclaredException does NOT escape configure().
+// The state assertion, not the NO_THROW, is what detects the bug -- every
+// re-configure in this file is followed by one.
 template<typename NodeT>
 void expect_reconfigure_cycle(const std::shared_ptr<NodeT> & node)
 {
@@ -147,6 +149,8 @@ TEST_F(LifecycleReconfigureTest, SeaSurfaceEstimatorKeepsOperatorParameter)
     node->get_parameter("sea_surface_frame").as_string(), "survey/map_tide");
 
   ASSERT_NO_THROW(node->configure());
+  ASSERT_EQ(node->get_current_state().id(), kInactive)
+    << "the second configure did not complete (issue #34)";
 
   EXPECT_EQ(
     node->get_parameter("sea_surface_frame").as_string(), "survey/map_tide")
@@ -169,6 +173,8 @@ TEST_F(LifecycleReconfigureTest, ChartDatumNodeKeepsOperatorParameter)
     rclcpp::Parameter("chart_datum_frame", std::string("survey/mllw")));
   ASSERT_NO_THROW(node->cleanup());
   ASSERT_NO_THROW(node->configure());
+  ASSERT_EQ(node->get_current_state().id(), kInactive)
+    << "the second configure did not complete (issue #34)";
 
   EXPECT_EQ(
     node->get_parameter("chart_datum_frame").as_string(), "survey/mllw");
@@ -235,6 +241,8 @@ TEST_F(LifecycleReconfigureTest, NavSatFixToVelocityKeepsOperatorParameter)
   node->set_parameter(rclcpp::Parameter("maximum_interval_seconds", 0.75));
   ASSERT_NO_THROW(node->cleanup());
   ASSERT_NO_THROW(node->configure());
+  ASSERT_EQ(node->get_current_state().id(), kInactive)
+    << "the second configure did not complete (issue #34)";
 
   EXPECT_EQ(node->get_parameter("map_frame").as_string(), "survey/map");
   EXPECT_DOUBLE_EQ(
@@ -301,6 +309,8 @@ TEST_F(LifecycleReconfigureTest, NavSatFixToVelocityRespectsLifecycleState)
   ASSERT_NO_THROW(node->deactivate());
   ASSERT_NO_THROW(node->cleanup());
   ASSERT_NO_THROW(node->configure());
+  ASSERT_EQ(node->get_current_state().id(), kInactive)
+    << "the second configure did not complete (issue #34)";
   ASSERT_NO_THROW(node->activate());
   ASSERT_TRUE(
     spin_until(
@@ -338,6 +348,8 @@ TEST_F(LifecycleReconfigureTest, TideCopierKeepsOperatorParameter)
     rclcpp::Parameter("output_map_tide_frame", std::string("survey/map_tide")));
   ASSERT_NO_THROW(node->cleanup());
   ASSERT_NO_THROW(node->configure());
+  ASSERT_EQ(node->get_current_state().id(), kInactive)
+    << "the second configure did not complete (issue #34)";
 
   EXPECT_EQ(
     node->get_parameter("output_map_tide_frame").as_string(),
@@ -415,6 +427,8 @@ TEST_F(LifecycleReconfigureTest, TideCopierRespectsLifecycleState)
     << "a cleaned-up node kept copying the tide into /tf";
 
   ASSERT_NO_THROW(node->configure());
+  ASSERT_EQ(node->get_current_state().id(), kInactive)
+    << "the second configure did not complete (issue #34)";
   ASSERT_NO_THROW(node->activate());
   ASSERT_TRUE(
     spin_until(
