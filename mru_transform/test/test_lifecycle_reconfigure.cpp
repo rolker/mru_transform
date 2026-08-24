@@ -20,8 +20,11 @@
 #include <geometry_msgs/msg/twist_stamped.hpp>
 #include <gtest/gtest.h>
 #include <lifecycle_msgs/msg/state.hpp>
+#include <nav_msgs/msg/odometry.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/nav_sat_fix.hpp>
+#include <std_msgs/msg/float64.hpp>
+#include <std_msgs/msg/string.hpp>
 #include <tf2_msgs/msg/tf_message.hpp>
 
 #include "mru_transform/nodes/chart_datum_node.hpp"
@@ -300,6 +303,92 @@ TEST_F(LifecycleReconfigureTest, ChartDatumNodeRecoversFromFailedConfigure)
   ASSERT_NO_THROW(node->configure())
     << "retry after a failed configure threw (issue #34)";
   EXPECT_EQ(node->get_current_state().id(), kInactive);
+}
+
+// on_cleanup must release what on_configure created, and an endpoint is the
+// only part of that a peer can observe: a released subscription stops counting
+// against a publisher, a released publisher stops counting against a
+// subscriber. Without these two cases, deleting the resets in either node's
+// on_cleanup leaves the whole file green -- and a teardown nothing tests is how
+// this class of bug comes back. (tide_copier's and nav_sat_fix_to_velocity's
+// resets are already pinned by their live lifecycle cases, which fail if a
+// cleaned-up node keeps receiving.)
+TEST_F(LifecycleReconfigureTest, SeaSurfaceEstimatorCleanupReleasesItsEndpoints)
+{
+  auto node = std::make_shared<SeaSurfaceEstimator>(isolated_options());
+  auto peer = make_peer("sea_surface_estimator_peer");
+
+  auto odom_pub = peer->create_publisher<nav_msgs::msg::Odometry>("odom", 10);
+  auto tide_sub = peer->create_subscription<std_msgs::msg::Float64>(
+    "tide_estimate", rclcpp::QoS(1).transient_local(),
+    [](std_msgs::msg::Float64::SharedPtr) {});
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(peer);
+  executor.add_node(node->get_node_base_interface());
+
+  ASSERT_NO_THROW(node->configure());
+  ASSERT_TRUE(
+    spin_until(
+      executor,
+      [&] {
+        return odom_pub->get_subscription_count() == 1 &&
+        tide_sub->get_publisher_count() == 1;
+      },
+      std::chrono::seconds(15)))
+    << "configure did not create both endpoints (odom subscribers: "
+    << odom_pub->get_subscription_count() << ", tide_estimate publishers: "
+    << tide_sub->get_publisher_count() << ")";
+
+  ASSERT_NO_THROW(node->cleanup());
+  EXPECT_TRUE(
+    spin_until(
+      executor,
+      [&] {
+        return odom_pub->get_subscription_count() == 0 &&
+        tide_sub->get_publisher_count() == 0;
+      },
+      std::chrono::seconds(15)))
+    << "on_cleanup did not release both endpoints (odom subscribers: "
+    << odom_pub->get_subscription_count() << ", tide_estimate publishers: "
+    << tide_sub->get_publisher_count() << ")";
+}
+
+TEST_F(LifecycleReconfigureTest, ChartDatumNodeCleanupReleasesItsPublishers)
+{
+  auto node = std::make_shared<ChartDatumNode>(isolated_options());
+  auto peer = make_peer("chart_datum_peer");
+
+  const auto latched = rclcpp::QoS(1).transient_local();
+  auto mllw_sub = peer->create_subscription<std_msgs::msg::Float64>(
+    "mllw_offset", latched, [](std_msgs::msg::Float64::SharedPtr) {});
+  auto mhhw_sub = peer->create_subscription<std_msgs::msg::Float64>(
+    "mhhw_offset", latched, [](std_msgs::msg::Float64::SharedPtr) {});
+  auto source_sub = peer->create_subscription<std_msgs::msg::String>(
+    "datum_source", latched, [](std_msgs::msg::String::SharedPtr) {});
+
+  auto publisher_counts = [&] {
+      return mllw_sub->get_publisher_count() + mhhw_sub->get_publisher_count() +
+             source_sub->get_publisher_count();
+    };
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(peer);
+  executor.add_node(node->get_node_base_interface());
+
+  ASSERT_NO_THROW(node->configure());
+  ASSERT_TRUE(
+    spin_until(
+      executor, [&] {return publisher_counts() == 3;}, std::chrono::seconds(15)))
+    << "configure did not create all three latched publishers (saw "
+    << publisher_counts() << " of 3)";
+
+  ASSERT_NO_THROW(node->cleanup());
+  EXPECT_TRUE(
+    spin_until(
+      executor, [&] {return publisher_counts() == 0;}, std::chrono::seconds(15)))
+    << "on_cleanup did not release the latched publishers (" << publisher_counts()
+    << " still up) -- a cleaned-up node still latches a datum for late subscribers";
 }
 
 TEST_F(LifecycleReconfigureTest, NavSatFixToVelocityReconfigures)
