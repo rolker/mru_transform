@@ -64,30 +64,58 @@ public:
     cleanup_proj();
   }
 
-  CallbackReturn on_configure(const rclcpp_lifecycle::State & state)
+  CallbackReturn on_configure(const rclcpp_lifecycle::State & state) override
   {
-    declare_parameter("chart_datum_frame", chart_datum_frame_);
+    // Every declare is guarded so a second configure does not throw
+    // ParameterAlreadyDeclaredException, and the parameters are deliberately
+    // NOT undeclared in on_cleanup so a value an operator set with
+    // `ros2 param set` survives a cleanup -> configure cycle.
+    //
+    // The guard matters twice over on this node: the publish_rate /
+    // recalc_interval validation below returns FAILURE partway through the
+    // declares, and a failed configure returns the FSM to `unconfigured`
+    // WITHOUT calling on_cleanup -- from which `cleanup` is not a legal
+    // transition. Anything that released parameters in on_cleanup could never
+    // run on that path, so correcting a bad rate and re-configuring would
+    // still throw. (#34)
+    if (!has_parameter("chart_datum_frame")) {
+      declare_parameter("chart_datum_frame", chart_datum_frame_);
+    }
     get_parameter("chart_datum_frame", chart_datum_frame_);
 
-    declare_parameter("mhhw_frame", mhhw_frame_);
+    if (!has_parameter("mhhw_frame")) {
+      declare_parameter("mhhw_frame", mhhw_frame_);
+    }
     get_parameter("mhhw_frame", mhhw_frame_);
 
-    declare_parameter("map_frame", map_frame_);
+    if (!has_parameter("map_frame")) {
+      declare_parameter("map_frame", map_frame_);
+    }
     get_parameter("map_frame", map_frame_);
 
-    declare_parameter("base_frame", base_frame_);
+    if (!has_parameter("base_frame")) {
+      declare_parameter("base_frame", base_frame_);
+    }
     get_parameter("base_frame", base_frame_);
 
-    declare_parameter("geoid_grid", std::string(""));
+    if (!has_parameter("geoid_grid")) {
+      declare_parameter("geoid_grid", std::string(""));
+    }
     get_parameter("geoid_grid", geoid_grid_path_);
 
-    declare_parameter("vdatum_grid_dir", std::string(""));
+    if (!has_parameter("vdatum_grid_dir")) {
+      declare_parameter("vdatum_grid_dir", std::string(""));
+    }
     get_parameter("vdatum_grid_dir", vdatum_grid_dir_);
 
-    declare_parameter("publish_rate", publish_rate_);
+    if (!has_parameter("publish_rate")) {
+      declare_parameter("publish_rate", publish_rate_);
+    }
     get_parameter("publish_rate", publish_rate_);
 
-    declare_parameter("recalc_interval", recalc_interval_);
+    if (!has_parameter("recalc_interval")) {
+      declare_parameter("recalc_interval", recalc_interval_);
+    }
     get_parameter("recalc_interval", recalc_interval_);
 
     // Non-positive timer periods would divide by zero (never publish) or peg a
@@ -103,14 +131,20 @@ public:
       return CallbackReturn::FAILURE;
     }
 
-    declare_parameter("datum_config_path", std::string(""));
+    if (!has_parameter("datum_config_path")) {
+      declare_parameter("datum_config_path", std::string(""));
+    }
     get_parameter("datum_config_path", datum_config_path_);
 
     // NaN sentinel means "unset". lake_datum, when set, overrides everything.
     const double kUnset = std::numeric_limits<double>::quiet_NaN();
-    declare_parameter("lake_datum", kUnset);
+    if (!has_parameter("lake_datum")) {
+      declare_parameter("lake_datum", kUnset);
+    }
     get_parameter("lake_datum", lake_datum_);
-    declare_parameter("lake_datum_mhhw", kUnset);
+    if (!has_parameter("lake_datum_mhhw")) {
+      declare_parameter("lake_datum_mhhw", kUnset);
+    }
     get_parameter("lake_datum_mhhw", lake_datum_mhhw_);
 
     // NaN is the "unset" sentinel; an infinite value is an operator error, not
@@ -183,7 +217,7 @@ public:
     return LifecycleNode::on_configure(state);
   }
 
-  CallbackReturn on_activate(const rclcpp_lifecycle::State & state)
+  CallbackReturn on_activate(const rclcpp_lifecycle::State & state) override
   {
     publish_timer_ = create_wall_timer(
       std::chrono::duration<double>(1.0 / publish_rate_),
@@ -199,24 +233,40 @@ public:
     return LifecycleNode::on_activate(state);
   }
 
-  CallbackReturn on_deactivate(const rclcpp_lifecycle::State & state)
+  CallbackReturn on_deactivate(const rclcpp_lifecycle::State & state) override
   {
     publish_timer_.reset();
     recalc_timer_.reset();
     return LifecycleNode::on_deactivate(state);
   }
 
-  CallbackReturn on_cleanup(const rclcpp_lifecycle::State & state)
+  CallbackReturn on_cleanup(const rclcpp_lifecycle::State & state) override
   {
+    // Timers are normally released by on_deactivate, but cleanup is also
+    // reachable from inactive after a configure that never activated -- and a
+    // timer outliving the PROJ context it calls into would be a use-after-free.
+    publish_timer_.reset();
+    recalc_timer_.reset();
+
     cleanup_proj();
     vdatum_enabled_ = false;
     datum_entries_.clear();
     datum_source_ = "none";
     has_valid_mllw_ = false;
     has_valid_mhhw_ = false;
-    tf_buffer_.reset();
+
+    // The listener fills the buffer from its own spin thread, so it is torn
+    // down before the buffer it references.
     tf_listener_.reset();
+    tf_buffer_.reset();
     tf_broadcaster_.reset();
+
+    // Everything else on_configure created.
+    mllw_pub_.reset();
+    mhhw_pub_.reset();
+    datum_source_pub_.reset();
+
+    // Parameters stay declared on purpose: see on_configure.
     return LifecycleNode::on_cleanup(state);
   }
 

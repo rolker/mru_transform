@@ -396,6 +396,7 @@ if(BUILD_TESTING)
   # operator set on the running node.
   ament_add_gtest(test_lifecycle_reconfigure test/test_lifecycle_reconfigure.cpp)
   target_link_libraries(test_lifecycle_reconfigure
+    datum_config
     rclcpp::rclcpp
     rclcpp_lifecycle::rclcpp_lifecycle
     ${geometry_msgs_TARGETS}
@@ -403,6 +404,10 @@ if(BUILD_TESTING)
     ${std_msgs_TARGETS}
     tf2::tf2
     tf2_ros::tf2_ros
+    PkgConfig::PROJ
+  )
+  ament_target_dependencies(test_lifecycle_reconfigure
+    geodesy
   )
   target_include_directories(test_lifecycle_reconfigure PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/include"

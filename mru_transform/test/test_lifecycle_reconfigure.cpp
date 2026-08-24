@@ -17,6 +17,7 @@
 #include <lifecycle_msgs/msg/state.hpp>
 #include <rclcpp/rclcpp.hpp>
 
+#include "mru_transform/nodes/chart_datum_node.hpp"
 #include "mru_transform/nodes/sea_surface_estimator.hpp"
 
 namespace
@@ -92,4 +93,70 @@ TEST_F(LifecycleReconfigureTest, SeaSurfaceEstimatorKeepsOperatorParameter)
     << "the re-configure re-declared the parameter and lost the operator's value";
   EXPECT_DOUBLE_EQ(
     node->get_parameter("minimum_buffer_duration").as_double(), 12.5);
+}
+
+TEST_F(LifecycleReconfigureTest, ChartDatumNodeReconfigures)
+{
+  expect_reconfigure_cycle(std::make_shared<ChartDatumNode>());
+}
+
+TEST_F(LifecycleReconfigureTest, ChartDatumNodeKeepsOperatorParameter)
+{
+  auto node = std::make_shared<ChartDatumNode>();
+
+  ASSERT_NO_THROW(node->configure());
+  node->set_parameter(
+    rclcpp::Parameter("chart_datum_frame", std::string("survey/mllw")));
+  ASSERT_NO_THROW(node->cleanup());
+  ASSERT_NO_THROW(node->configure());
+
+  EXPECT_EQ(
+    node->get_parameter("chart_datum_frame").as_string(), "survey/mllw");
+}
+
+// The parameter surviving is only half of it -- on_configure must also ACT on
+// the surviving value. publish_rate is the cheapest observable proof: the node
+// validates it and fails the transition, so setting it invalid on a configured
+// node and re-configuring must fail. If the re-configure re-read the launch
+// default instead, this would succeed.
+TEST_F(LifecycleReconfigureTest, ChartDatumNodeReconfigureUsesTheNewValue)
+{
+  auto node = std::make_shared<ChartDatumNode>();
+
+  ASSERT_NO_THROW(node->configure());
+  ASSERT_EQ(node->get_current_state().id(), kInactive);
+
+  node->set_parameter(rclcpp::Parameter("publish_rate", -1.0));
+  ASSERT_NO_THROW(node->cleanup());
+  ASSERT_NO_THROW(node->configure());
+
+  EXPECT_EQ(node->get_current_state().id(), kUnconfigured)
+    << "the re-configure did not read the value the operator set";
+}
+
+// A configure that returns FAILURE partway through its declares goes back to
+// `unconfigured` WITHOUT on_cleanup running, and `cleanup` is not legal from
+// `unconfigured` -- so nothing that released parameters during cleanup could
+// ever run here. Correcting the bad value and re-configuring must work; before
+// the fix the retry threw on the already-declared chart_datum_frame.
+TEST_F(LifecycleReconfigureTest, ChartDatumNodeRecoversFromFailedConfigure)
+{
+  rclcpp::NodeOptions options;
+  options.parameter_overrides({rclcpp::Parameter("publish_rate", 0.0)});
+  auto node = std::make_shared<ChartDatumNode>(options);
+
+  ASSERT_NO_THROW(node->configure());
+  ASSERT_EQ(node->get_current_state().id(), kUnconfigured)
+    << "publish_rate 0 should have failed the transition";
+
+  // The parameters declared before the validation are still declared, and the
+  // node is unconfigured -- exactly the state an undeclare-on-cleanup fix
+  // cannot reach.
+  ASSERT_TRUE(node->has_parameter("chart_datum_frame"));
+
+  node->set_parameter(rclcpp::Parameter("publish_rate", 1.0));
+
+  ASSERT_NO_THROW(node->configure())
+    << "retry after a failed configure threw (issue #34)";
+  EXPECT_EQ(node->get_current_state().id(), kInactive);
 }
