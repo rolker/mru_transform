@@ -550,6 +550,65 @@ TEST_F(LifecycleReconfigureTest, ChartDatumNodeRejectsNonFiniteTimerPeriods)
   }
 }
 
+// on_error is reachable, and this is the node whose error path releases the
+// PROJ context. A throw out of a transition callback routes the FSM through
+// `errorprocessing` to `unconfigured` WITHOUT running on_cleanup, so only the
+// on_error override releases what the failed transition had already
+// allocated -- here, everything on_configure created.
+//
+// The lever is on_activate, not on_configure: in all four nodes every
+// declare_parameter precedes every allocation, so a parameter fault throws too
+// early to strand anything. publish_rate = 1e-10 instead passes on_configure's
+// finiteness/positivity check (it is finite and > 0) and leaves a 1e10 s timer
+// period for on_activate, which exceeds std::chrono::nanoseconds::max()
+// (~9.22e9 s), so rclcpp's safe_cast_to_period_in_ns throws std::invalid_argument
+// out of create_wall_timer. rclcpp_lifecycle CATCHES that ("Caught exception in
+// callback for transition 13"), so -- as everywhere else in this file -- the
+// resulting STATE, not a throw, is what the test asserts on. (#34)
+TEST_F(LifecycleReconfigureTest, ChartDatumNodeErrorPathReleasesItsPublishers)
+{
+  auto options = isolated_options();
+  options.parameter_overrides({rclcpp::Parameter("publish_rate", 1e-10)});
+  auto node = std::make_shared<ChartDatumNode>(options);
+  auto peer = make_peer("chart_datum_error_release_peer");
+
+  const auto latched = rclcpp::QoS(1).transient_local();
+  auto mllw_sub = peer->create_subscription<std_msgs::msg::Float64>(
+    "mllw_offset", latched, [](std_msgs::msg::Float64::SharedPtr) {});
+  auto mhhw_sub = peer->create_subscription<std_msgs::msg::Float64>(
+    "mhhw_offset", latched, [](std_msgs::msg::Float64::SharedPtr) {});
+  auto source_sub = peer->create_subscription<std_msgs::msg::String>(
+    "datum_source", latched, [](std_msgs::msg::String::SharedPtr) {});
+
+  const auto publishers = [&] {
+      return mllw_sub->get_publisher_count() + mhhw_sub->get_publisher_count() +
+             source_sub->get_publisher_count();
+    };
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(peer);
+  executor.add_node(node->get_node_base_interface());
+
+  ASSERT_NO_THROW(node->configure());
+  ASSERT_EQ(node->get_current_state().id(), kInactive)
+    << "publish_rate 1e-10 is finite and > 0, so configure must accept it -- "
+       "the point of this case is that the fault surfaces in on_activate";
+  ASSERT_TRUE(
+    spin_until(executor, [&] {return publishers() == 3;}, std::chrono::seconds(15)))
+    << "configure did not bring the publishers up (saw " << publishers() << ")";
+
+  ASSERT_NO_THROW(node->activate());
+  EXPECT_EQ(node->get_current_state().id(), kUnconfigured)
+    << "a throwing create_wall_timer should have routed the node through "
+       "`errorprocessing` to `unconfigured`";
+
+  EXPECT_TRUE(
+    spin_until(executor, [&] {return publishers() == 0;}, std::chrono::seconds(15)))
+    << "the error path left " << publishers() << " latched publisher(s) up -- "
+    << "on_cleanup does NOT run on `errorprocessing`, so only on_error can "
+       "release them (and it is what also closes the PROJ context)";
+}
+
 // on_cleanup must release what on_configure created, and an endpoint is the
 // only part of that a peer can observe: a released subscription stops counting
 // against a publisher, a released publisher stops counting against a
