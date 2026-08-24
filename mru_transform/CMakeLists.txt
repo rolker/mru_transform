@@ -12,6 +12,7 @@ find_package(ament_cmake REQUIRED)
 find_package(geodesy REQUIRED)
 find_package(geographic_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
+find_package(lifecycle_msgs REQUIRED)
 find_package(mru_transform_interfaces REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(rclcpp REQUIRED)
@@ -151,6 +152,7 @@ add_executable(
 )
 
 target_link_libraries(sea_surface_estimator
+  ${lifecycle_msgs_TARGETS}
   rclcpp::rclcpp
   rclcpp_lifecycle::rclcpp_lifecycle
   ${geometry_msgs_TARGETS}
@@ -177,6 +179,7 @@ target_include_directories(nav_sat_fix_to_velocity PRIVATE
 )
 
 target_link_libraries(nav_sat_fix_to_velocity
+  ${lifecycle_msgs_TARGETS}
   rclcpp::rclcpp
   rclcpp_lifecycle::rclcpp_lifecycle
   ${geographic_msgs_TARGETS}
@@ -200,6 +203,7 @@ add_executable(
 )
 
 target_link_libraries(tide_copier
+  ${lifecycle_msgs_TARGETS}
   rclcpp::rclcpp
   rclcpp_lifecycle::rclcpp_lifecycle
   ${tf2_msgs_TARGETS}
@@ -219,6 +223,7 @@ add_executable(
 )
 
 target_link_libraries(chart_datum_node
+  ${lifecycle_msgs_TARGETS}
   datum_config
   rclcpp::rclcpp
   rclcpp_lifecycle::rclcpp_lifecycle
@@ -422,6 +427,7 @@ if(BUILD_TESTING)
   # operator set on the running node.
   ament_add_gtest(test_lifecycle_reconfigure test/test_lifecycle_reconfigure.cpp)
   target_link_libraries(test_lifecycle_reconfigure
+  ${lifecycle_msgs_TARGETS}
     datum_config
     rclcpp::rclcpp
     rclcpp_lifecycle::rclcpp_lifecycle
