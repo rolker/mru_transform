@@ -191,6 +191,49 @@ TEST_F(LifecycleReconfigureTest, SeaSurfaceEstimatorKeepsOperatorParameter)
     node->get_parameter("minimum_buffer_duration").as_double(), 12.5);
 }
 
+// The two buffer durations bound the averaging window and were the only
+// numeric parameters in either node with no validation at all. A non-positive
+// maximum prunes the buffer empty on every sample -- including the sample just
+// inserted -- and the callback then dereferenced odometry_buffer_.begin() on an
+// empty map, which is undefined behaviour, not a missing publication. A minimum
+// at or above the maximum can never be satisfied, so the node would sit there
+// silently never publishing a tide. Both must fail the transition, and the
+// corrected value must be what the retry reads.
+TEST_F(LifecycleReconfigureTest, SeaSurfaceEstimatorRejectsUnusableBufferDurations)
+{
+  {
+    auto options = isolated_options();
+    options.parameter_overrides(
+      {rclcpp::Parameter("maximum_buffer_duration", -1.0)});
+    auto node = std::make_shared<SeaSurfaceEstimator>(options);
+
+    ASSERT_NO_THROW(node->configure());
+    ASSERT_EQ(node->get_current_state().id(), kUnconfigured)
+      << "a negative maximum_buffer_duration was accepted; the odometry "
+         "callback would dereference an empty buffer";
+
+    node->set_parameter(rclcpp::Parameter("maximum_buffer_duration", 30.0));
+    ASSERT_NO_THROW(node->configure())
+      << "retry after the failed configure threw (issue #34)";
+    EXPECT_EQ(node->get_current_state().id(), kInactive);
+  }
+
+  {
+    auto options = isolated_options();
+    options.parameter_overrides(
+      {
+        rclcpp::Parameter("minimum_buffer_duration", 30.0),
+        rclcpp::Parameter("maximum_buffer_duration", 30.0),
+      });
+    auto node = std::make_shared<SeaSurfaceEstimator>(options);
+
+    ASSERT_NO_THROW(node->configure());
+    EXPECT_EQ(node->get_current_state().id(), kUnconfigured)
+      << "a minimum_buffer_duration at the maximum was accepted; the window "
+         "can never be long enough and the node would never publish";
+  }
+}
+
 TEST_F(LifecycleReconfigureTest, ChartDatumNodeReconfigures)
 {
   expect_reconfigure_cycle(std::make_shared<ChartDatumNode>(isolated_options()));

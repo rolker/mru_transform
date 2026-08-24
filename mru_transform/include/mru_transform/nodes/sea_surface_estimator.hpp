@@ -50,6 +50,38 @@ public:
     }
     get_parameter("maximum_buffer_duration", maximum_buffer_duration_);
 
+    // Both durations bound the averaging window and neither was validated,
+    // unlike tide_range_margin below and publish_rate / recalc_interval in
+    // chart_datum_node. A non-positive maximum prunes the buffer empty on every
+    // sample -- including the sample just inserted, leaving the callback to
+    // dereference odometry_buffer_.begin() on an empty map. A minimum at or
+    // above the maximum can never be satisfied, so the node would silently
+    // never publish a tide. Both are operator errors worth failing the
+    // transition for: configure can be retried, and the parameters survive the
+    // failure so the corrected value is what the retry reads. (#34)
+    if (!(maximum_buffer_duration_ > 0.0)) {
+      RCLCPP_ERROR(
+        get_logger(), "maximum_buffer_duration must be > 0 (got %.3f)",
+        maximum_buffer_duration_);
+      return CallbackReturn::FAILURE;
+    }
+    if (minimum_buffer_duration_ < 0.0) {
+      RCLCPP_WARN(
+        get_logger(),
+        "Parameter 'minimum_buffer_duration' is negative (%f); clamping to 0.0",
+        minimum_buffer_duration_);
+      minimum_buffer_duration_ = 0.0;
+    }
+    if (minimum_buffer_duration_ >= maximum_buffer_duration_) {
+      RCLCPP_ERROR(
+        get_logger(),
+        "minimum_buffer_duration (%.3f) must be < maximum_buffer_duration "
+        "(%.3f); the averaging window could never be long enough and the node "
+        "would never publish",
+        minimum_buffer_duration_, maximum_buffer_duration_);
+      return CallbackReturn::FAILURE;
+    }
+
     if (!has_parameter("water_line_frame")) {
       declare_parameter("water_line_frame", water_line_frame_);
     }
@@ -178,6 +210,17 @@ public:
           odometry_buffer_.begin()->first < oldest_time_to_keep)
     {
       odometry_buffer_.erase(odometry_buffer_.begin());
+    }
+
+    // Defensive: on_configure rejects a maximum_buffer_duration that could
+    // prune the just-inserted sample away, so the buffer holds at least that
+    // one. begin() on an empty map would be undefined behaviour, not an empty
+    // average, so the invariant is checked rather than assumed.
+    if (odometry_buffer_.empty()) {
+      RCLCPP_ERROR_THROTTLE(
+        get_logger(), *get_clock(), 10000,
+        "Odometry buffer emptied by the retention prune; publishing nothing.");
+      return;
     }
 
     // Make sure we have a long enough history before publishing the transform.
