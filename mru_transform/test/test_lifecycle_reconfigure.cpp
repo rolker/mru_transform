@@ -328,10 +328,11 @@ TEST_F(LifecycleReconfigureTest, NavSatFixToVelocityKeepsOperatorParameter)
 //   * an inactive node must not publish. velocity_publisher_ used to be an
 //     rclcpp::Publisher, whose non-virtual publish() bypasses the lifecycle
 //     activation gate entirely, and the callback did not check state.
-//   * the first fix after a re-configure must not be differenced against a fix
-//     from before the cleanup: with maximum_interval_ defaulting to 2 s, a
-//     quick reconfigure would otherwise report a velocity averaged across the
-//     gap. on_cleanup clears last_navsatfix_.
+//   * the first fix after a re-configure -- or after a re-activation -- must
+//     not be differenced against a fix from before the gap: with
+//     maximum_interval_ defaulting to 2 s, a quick cycle would otherwise report
+//     a velocity averaged across an interval the node was muted for.
+//     on_cleanup and on_deactivate both clear last_navsatfix_.
 TEST_F(LifecycleReconfigureTest, NavSatFixToVelocityRespectsLifecycleState)
 {
   auto node = std::make_shared<NavSatFixToVelocity>(isolated_options());
@@ -405,6 +406,28 @@ TEST_F(LifecycleReconfigureTest, NavSatFixToVelocityRespectsLifecycleState)
     spin_until(
       executor, [&] {return velocities.size() == 1;}, std::chrono::seconds(5)))
     << "the re-configured node stopped producing velocities";
+  velocities.clear();
+
+  // The same gap without a cleanup: deactivate, re-activate, and feed a fix
+  // 0.5 s after the last one the node accepted -- well inside the 2 s
+  // maximum_interval_. The ACTIVE guard alone does not cover this: it drops the
+  // fixes arriving while inactive but leaves the pre-deactivation fix in the
+  // window, so the first fix after re-activation was reported as a velocity
+  // averaged across the muted gap. on_deactivate clears last_navsatfix_.
+  ASSERT_NO_THROW(node->deactivate());
+  ASSERT_NO_THROW(node->activate());
+
+  fix_pub->publish(make_fix(103.0, 43.16));
+  spin_for(executor, std::chrono::milliseconds(500));
+  EXPECT_TRUE(velocities.empty())
+    << "a velocity was computed across the deactivation gap -- "
+       "last_navsatfix_ survived on_deactivate";
+
+  fix_pub->publish(make_fix(103.5, 43.17));
+  EXPECT_TRUE(
+    spin_until(
+      executor, [&] {return velocities.size() == 1;}, std::chrono::seconds(5)))
+    << "the re-activated node stopped producing velocities";
 
   node->deactivate();
 }

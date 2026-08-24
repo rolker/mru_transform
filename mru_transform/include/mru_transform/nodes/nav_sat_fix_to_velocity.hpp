@@ -44,17 +44,27 @@ public:
     return LifecycleNode::on_configure(state);
   }
 
+  CallbackReturn on_deactivate(const rclcpp_lifecycle::State &state) override
+  {
+    // Deactivation mutes the node, and a muted interval must not become a
+    // velocity. The ACTIVE guard in the callback drops fixes received while
+    // inactive but cannot make the gap itself safe: a deactivate -> activate
+    // cycle shorter than maximum_interval_ (2 s by default -- a quick operator
+    // cycle, and routine under bag/sim time) leaves the pre-deactivation fix
+    // inside the window, so the first fix after re-activation would be
+    // reported as a velocity averaged across the muted gap. Clearing here is
+    // what actually gives that guarantee. (#34)
+    last_navsatfix_ = sensor_msgs::msg::NavSatFix();
+    return LifecycleNode::on_deactivate(state);
+  }
+
   CallbackReturn on_cleanup(const rclcpp_lifecycle::State &state) override
   {
     navsat_subscription_.reset();
     velocity_publisher_.reset();
 
-    // last_navsatfix_ is the fix the next one is differenced against. Kept
-    // across a cleanup, the first fix after a re-configure would be
-    // differenced against a pre-cleanup fix and reported as a velocity
-    // averaged over the cleanup gap -- whenever that gap is shorter than
-    // maximum_interval_ (2 s by default, so routinely). Clearing it makes the
-    // first fix after a re-configure seed the state instead. (#34)
+    // Same reasoning as on_deactivate: cleanup is also reachable directly from
+    // inactive, so clear the reference fix here too. (#34)
     last_navsatfix_ = sensor_msgs::msg::NavSatFix();
 
     // Parameters stay declared on purpose: see on_configure.
@@ -67,9 +77,10 @@ private:
     // rclcpp::Publisher::publish() is a non-virtual template that
     // LifecyclePublisher only hides, so nothing but this check keeps a
     // deactivated node from publishing. Returning before last_navsatfix_ is
-    // updated is deliberate: the fix from before the deactivation is then too
-    // old for the maximum_interval_ check, so the first sample after
-    // re-activation seeds rather than producing a velocity across the gap.
+    // updated is deliberate -- fixes arriving while inactive must not become
+    // the reference for a later difference. The gap itself is made safe by
+    // on_deactivate/on_cleanup clearing last_navsatfix_, not by the
+    // maximum_interval_ check, which a sub-2 s cycle would pass.
     if (get_current_state().id() != lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE) {
       return;
     }
