@@ -152,9 +152,14 @@ add_executable(
 target_link_libraries(sea_surface_estimator
   rclcpp::rclcpp
   rclcpp_lifecycle::rclcpp_lifecycle
+  ${geometry_msgs_TARGETS}
   ${nav_msgs_TARGETS}
   ${std_msgs_TARGETS}
+  tf2::tf2
   tf2_ros::tf2_ros
+)
+target_include_directories(sea_surface_estimator PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}/include"
 )
 
 install(TARGETS sea_surface_estimator
@@ -358,6 +363,31 @@ if(BUILD_TESTING)
     datum_config
   )
   target_include_directories(test_datum_config PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/include"
+  )
+
+  # The water-line lever arm sea_surface_estimator applies to odom Z before
+  # calling it the sea surface (the node's original TODO, 2026-08-21).
+  ament_add_gtest(test_water_line_offset test/test_water_line_offset.cpp)
+  target_link_libraries(test_water_line_offset
+    ${geometry_msgs_TARGETS}
+    tf2::tf2
+  )
+  target_include_directories(test_water_line_offset PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/include"
+  )
+
+  # Issue #32: the TF lookup behind the water-line correction -- argument
+  # order (the sign convention), caching, invalidation and the failure paths --
+  # exercised against a tf2_ros::Buffer populated with setTransform.
+  ament_add_gtest(test_water_line_lever_arm test/test_water_line_lever_arm.cpp)
+  target_link_libraries(test_water_line_lever_arm
+    ${geometry_msgs_TARGETS}
+    rclcpp::rclcpp
+    tf2::tf2
+    tf2_ros::tf2_ros
+  )
+  target_include_directories(test_water_line_lever_arm PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
   )
 
