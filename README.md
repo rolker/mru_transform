@@ -198,10 +198,18 @@ reasons:
   **policy**. The `(0, 0)` boundary is the case worth being clear about: it used
   to *work* — the prune keeps the just-arrived sample, so the node published the
   instantaneous height with no smoothing at all — and it is refused anyway,
-  because this node exists to average and an unsmoothed single-sample tide feeds
-  every sounding. Any other pair with the minimum at or above the maximum
-  describes a window that can never be long enough, so the node would sit there
-  silently never publishing.
+  because this node exists to average and the tide feeds every sounding. Any
+  other pair with the minimum at or above the maximum describes a window that
+  can never be long enough, so the node would sit there silently never
+  publishing.
+
+  Note what this does **not** refuse: `minimum_buffer_duration = 0` with a
+  positive maximum is accepted, and its first estimate after every configure is
+  a single unsmoothed sample as well — latched on `tide_estimate`. The
+  difference is that the window then fills and the node starts averaging, so
+  that is a start-up transient; at `(0, 0)` the node is unsmoothed permanently.
+  Set a minimum you actually want to average over rather than relying on the
+  negative-value clamp above to land on 0.
 
 Correct the parameter and `configure` again: the transition is retryable and the
 parameters survive the failure, so the corrected value is what the retry reads.

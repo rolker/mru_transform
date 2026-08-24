@@ -275,9 +275,13 @@ TEST_F(LifecycleReconfigureTest, SeaSurfaceEstimatorKeepsOperatorParameter)
 //   * a minimum at or above the maximum is rejected as POLICY. (0, 0) is the
 //     boundary and it did work before this change -- the prune compares `<`, so
 //     a zero maximum keeps the just-inserted sample and the node published the
-//     instantaneous height with no smoothing. This node exists to average, and
-//     an unsmoothed single-sample tide feeds every sounding, so it is refused.
-//     Every other minimum >= maximum pair could never be satisfied either way.
+//     instantaneous height with no smoothing, permanently -- the maximum prunes
+//     the window back to one sample on every message. This node exists to
+//     average and the tide feeds every sounding, so it is refused. (A zero
+//     MINIMUM with a positive maximum is accepted: its first estimate is
+//     unsmoothed too, but the window then fills, so that is a start-up
+//     transient rather than the steady state.) Every other minimum >= maximum
+//     pair could never be satisfied either way.
 // All must fail the transition, and the corrected value must be what the retry
 // reads.
 TEST_F(LifecycleReconfigureTest, SeaSurfaceEstimatorRejectsUnusableBufferDurations)

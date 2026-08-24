@@ -80,11 +80,20 @@ public:
     // cutoff equals `now`, the just-inserted key is exactly `now`, and the
     // sample is KEPT. (minimum 0, maximum 0) was a working configuration
     // before this change -- "publish the instantaneous height, no smoothing".
-    // It is rejected below as POLICY, not because of any mechanism: this node
-    // exists to average, and an unsmoothed single-sample tide on the path that
-    // feeds every sounding is not a configuration anyone should be running.
-    // Every other minimum >= maximum pair could additionally never be
-    // satisfied, so the node would sit there silently never publishing a tide.
+    // It is rejected below as POLICY, not because of any mechanism.
+    //
+    // Be exact about how far that policy reaches, because it is narrower than
+    // "never publish an unsmoothed sample". minimum_buffer_duration = 0 with
+    // any positive maximum IS accepted, and its first estimate after every
+    // configure is a single unsmoothed sample too (`0.0 < 0.0` is false) --
+    // latched, on a transient_local topic. The difference is that there the
+    // window then fills and the node starts averaging, so it is a start-up
+    // transient; at (0, 0) the maximum prunes the window back to one sample
+    // forever, so the node is PERMANENTLY unsmoothed, and an unsmoothed tide on
+    // the path that feeds every sounding is not a configuration anyone should
+    // be running indefinitely. Every other minimum >= maximum pair could
+    // additionally never be satisfied, so the node would sit there silently
+    // never publishing a tide.
     //
     // Both fail the transition rather than being clamped: configure can be
     // retried, and the parameters survive the failure so the corrected value
@@ -121,10 +130,10 @@ public:
       RCLCPP_ERROR(
         get_logger(),
         "minimum_buffer_duration (%.3f) must be < maximum_buffer_duration "
-        "(%.3f). (0, 0) does work -- it publishes a single unsmoothed sample -- "
-        "but this node exists to average, so it is rejected as policy; any "
-        "other minimum >= maximum could never be satisfied at all and the node "
-        "would never publish",
+        "(%.3f). (0, 0) does work -- it publishes a single unsmoothed sample, "
+        "permanently -- but this node exists to average, so it is rejected as "
+        "policy; any other minimum >= maximum could never be satisfied at all "
+        "and the node would never publish",
         minimum_buffer_duration_, maximum_buffer_duration_);
       return CallbackReturn::FAILURE;
     }
