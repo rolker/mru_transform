@@ -591,15 +591,15 @@ bug fix.
 - Commit identity correct on all **32** commits; working tree verified clean after every mutation.
 
 ### Findings
-- [ ] (must-fix) **The rationale that justifies all four lifecycle guards is false, and two of the guards are pinned by no test.** Three files now say `LifecyclePublisher`'s gate is "a non-virtual hide that `publish()` bypasses". It is not: `lifecycle_publisher.hpp:84-92` declares `virtual void publish(const MessageT &)` and it returns early on `!is_activated()`; every publisher member here is declared as `LifecyclePublisher<T>::SharedPtr`, so that gated override is what the call site reaches. **Proven by experiment, both directions:** (a) deleting *only* the state guard from `tide_copier::tf_callback` leaves **86/86 passing** — `TideCopierRespectsLifecycleState` does not detect its removal, because round 1 mutated the publisher *type* and the guard together and never separated them; (b) the branch's own new test shows `datum_source_pub_` — also a `LifecyclePublisher` — emitting 14 messages from a FINALIZED node, because `shutdown` from `active` never runs `on_deactivate`, so `SimpleManagedEntity::activated_` stays `true` into `finalized`. **That** is why the guards are load-bearing, and the comments say something else. On `jazzy` both `tide_copier` and `nav_sat_fix_to_velocity` held plain `rclcpp::Publisher` (`git show origin/jazzy:...`), so the claim was true of the old code and went stale when this branch changed the type. A maintainer who checks it, finds the gate does fire on deactivate, and concludes the guard is redundant would delete a check that is load-bearing for `shutdown`-from-`active` — and no test would stop them. Fix the three comments to the real mechanism, and extend the finalized test to at least `tide_copier` — `mru_transform/include/mru_transform/nodes/tide_copier.hpp:64-67`, `nav_sat_fix_to_velocity.hpp:76-79`, `chart_datum_node.hpp:572-574`
-- [ ] (must-fix) **The validation this round rewrote lets non-finite values through, and the comment it added claims otherwise.** The comment states "(A non-finite maximum is rejected by the same check…)". Only NaN and `-inf` are: `!(+inf >= 0.0)` is false, so `maximum_buffer_duration = .inf` configures cleanly — and `rclcpp::Duration::from_seconds(inf)` casts `inf` to `int64_t` (UB; `INT64_MIN` on x86-64), after which `now - Duration(INT64_MIN)` **throws `std::overflow_error`** out of `odometry_callback`, uncaught, out of `rclcpp::spin`, killing the tide node on its first odometry message. Verified by compiling and running it against jazzy's `rclcpp`: `Duration::from_seconds(+inf).nanoseconds() = -9223372036854775808`, then `THREW: std::overflow_error: time subtraction leads to int64_t overflow`. The same gap is on the minimum in mirror image: `NaN < 0.0` is false (no clamp) and `NaN >= maximum` is false, so a NaN minimum **passes both checks**, and `buffer_duration.seconds() < NaN` is false forever — the node publishes an unsmoothed single-sample `tide_estimate` and `map_tide` from the first message, which is precisely the configuration the `(0,0)` branch was added this round to refuse. Not a regression (the old form had the same hole), but the comment is new and the branch shows it knows the idiom — `lake_datum` gets an explicit `std::isinf` normalization. `std::isfinite()` on both, and say so in the README row — `mru_transform/include/mru_transform/nodes/sea_surface_estimator.hpp:62-64`, `:80`, `:88`, `README.md`
-- [ ] (must-fix) **`shutdown` still releases nothing; the gate treats the symptom.** No node in the package overrides `on_shutdown`, so `shutdown` from `active` *or* `inactive` never runs `on_cleanup`. The new gate stops fresh publications, but the three `transient_local` publishers on `chart_datum_node` (and `tide_estimate` on `sea_surface_estimator`) are never released, so for the rest of the process's life a **late-joining** subscriber still receives `datum_source: vdatum` and a latched MLLW offset from a finalized node — exactly the property round 2 pinned for the cleanup path in `ChartDatumNodeCleanupReleasesItsPublishers` ("a cleaned-up node still latches a datum for late subscribers"), which `shutdown` walks straight past. The new test cannot see it: its subscriber is created *before* the shutdown, so it exercises the fresh-publish path, not the durable history. `recalc_timer_` survives the same way and `recalc_callback` has no gate, so a finalized node keeps doing `earth -> base_link` lookups, PROJ queries, and `RCLCPP_INFO("Datum at (…) [source: …]")` into the operator's console forever. One `on_shutdown` override per node calling the existing release helper closes all of it. (If the operator prefers to hold the line on scope, this is legitimate follow-up-issue material alongside #37/#38 — the live-publishing half is already fixed — but it should be a recorded decision, not an omission.) — `mru_transform/include/mru_transform/nodes/chart_datum_node.hpp:226-230`, `:494`, `sea_surface_estimator.hpp:155-157`
-- [ ] (must-fix) **`on_error` went to one node and not to the one that publishes `map_tide`.** `sea_surface_estimator` has the identical member set and construction order and no `on_error`. A throw at or after `create_publisher`/`create_subscription` routes `errorprocessing -> unconfigured` with `tf_buffer_` and `tf_listener_` still set, and `cleanup` is not legal from `unconfigured`. The supported recovery is another configure — whose first act is `tf_buffer_ = std::make_shared<Buffer>(...)`, dropping the last reference to the old Buffer and destroying it while the **old** `tf_listener_` (not reassigned for another six lines) is still alive and writing into it from its dedicated thread through a raw `tf2::BufferCore &`. That is the exact use-after-free this file's own `on_cleanup` comment describes and orders against; the error path has no ordering at all. Same shape without the UAF on `tide_copier` and `nav_sat_fix_to_velocity` (shared_ptrs a retry overwrites). Fix as `chart_datum_node` did: factor the `on_cleanup` body and run it from both — `mru_transform/include/mru_transform/nodes/sea_surface_estimator.hpp:147-153`, `:169-200`
-- [ ] (suggestion) `~ChartDatumNode` calls `cleanup_proj()` in the destructor **body**, but `publish_timer_`/`recalc_timer_` are members destroyed only *after* the body returns — reproducing the ordering hazard the helper's own comment names ("a timer outliving the PROJ context it calls into would be a use-after-free"). Benign under the single-threaded executor, a UAF under a composed multi-threaded one, and the new test pins the fact that a node can sit in `finalized` with both timers armed — the state a destructor is most likely called from. Call `release_everything_on_configure_created()` instead — `mru_transform/include/mru_transform/nodes/chart_datum_node.hpp:62-65`
-- [ ] (suggestion) `ChartDatumNodeStopsPublishingWhenFinalized` goes straight from `activate()` to a 5 s `sources.size() >= 2` wait, so DDS discovery of the peer's `datum_source` subscription has to complete inside that budget. Every other live case in the file waits up to 15 s for endpoint match *first* — including the `get_publisher_count()` wait this very delta added at `:578-585`. Add the matching `spin_until(..., source_sub->get_publisher_count() > 0, 15s)` before it — `mru_transform/test/test_lifecycle_reconfigure.cpp:465-469`
-- [ ] (suggestion) The `(0, 0)` policy is narrower than the rationale it is documented with. `minimum_buffer_duration = 0` with any positive maximum is accepted, and on the first odometry message `0.0 < 0.0` is false — so the node's first published `tide_estimate` and first `map_tide` are the same unsmoothed single sample the policy refuses, latched on a `transient_local` topic. Worse, the README row added this round tells operators a negative minimum "is clamped to 0", steering the documented recovery from one bad value straight into that bucket. Either reject `minimum <= 0` (and clamp to something non-zero), or narrow the rationale to what is actually enforced — `mru_transform/include/mru_transform/nodes/sea_surface_estimator.hpp:88-105`, `README.md:168`
-- [ ] (suggestion) The `on_cleanup` comment still says "the **installed** headers now take NodeOptions" — `d6dd5d1` excluded `nodes/` from the install, so they are a source-tree test seam, not installed API. The substance survives (a composed user must keep to a single-threaded executor); the word is stale — `mru_transform/include/mru_transform/nodes/sea_surface_estimator.hpp:178`
-- [ ] (suggestion) Pre-existing, surfaced by the same lens and worth a follow-up rather than this PR: `chart_datum_node`'s `publish_rate`/`recalc_interval` checks are `<= 0.0`, so `publish_rate = inf` passes and yields `create_wall_timer(1.0/inf)` — a **zero-period timer**, the core-pegging failure the check exists to stop — and NaN passes into an out-of-range float→integral cast (UB). The rows added to the README this round ("Must be > 0; `on_configure` fails otherwise") are accurate about what is enforced, so this is not a doc defect — `mru_transform/include/mru_transform/nodes/chart_datum_node.hpp:121-132`
+- [x] (must-fix) **The rationale that justifies all four lifecycle guards is false, and two of the guards are pinned by no test.** Three files now say `LifecyclePublisher`'s gate is "a non-virtual hide that `publish()` bypasses". It is not: `lifecycle_publisher.hpp:84-92` declares `virtual void publish(const MessageT &)` and it returns early on `!is_activated()`; every publisher member here is declared as `LifecyclePublisher<T>::SharedPtr`, so that gated override is what the call site reaches. **Proven by experiment, both directions:** (a) deleting *only* the state guard from `tide_copier::tf_callback` leaves **86/86 passing** — `TideCopierRespectsLifecycleState` does not detect its removal, because round 1 mutated the publisher *type* and the guard together and never separated them; (b) the branch's own new test shows `datum_source_pub_` — also a `LifecyclePublisher` — emitting 14 messages from a FINALIZED node, because `shutdown` from `active` never runs `on_deactivate`, so `SimpleManagedEntity::activated_` stays `true` into `finalized`. **That** is why the guards are load-bearing, and the comments say something else. On `jazzy` both `tide_copier` and `nav_sat_fix_to_velocity` held plain `rclcpp::Publisher` (`git show origin/jazzy:...`), so the claim was true of the old code and went stale when this branch changed the type. A maintainer who checks it, finds the gate does fire on deactivate, and concludes the guard is redundant would delete a check that is load-bearing for `shutdown`-from-`active` — and no test would stop them. Fix the three comments to the real mechanism, and extend the finalized test to at least `tide_copier` — `mru_transform/include/mru_transform/nodes/tide_copier.hpp:64-67`, `nav_sat_fix_to_velocity.hpp:76-79`, `chart_datum_node.hpp:572-574`
+- [x] (must-fix) **The validation this round rewrote lets non-finite values through, and the comment it added claims otherwise.** The comment states "(A non-finite maximum is rejected by the same check…)". Only NaN and `-inf` are: `!(+inf >= 0.0)` is false, so `maximum_buffer_duration = .inf` configures cleanly — and `rclcpp::Duration::from_seconds(inf)` casts `inf` to `int64_t` (UB; `INT64_MIN` on x86-64), after which `now - Duration(INT64_MIN)` **throws `std::overflow_error`** out of `odometry_callback`, uncaught, out of `rclcpp::spin`, killing the tide node on its first odometry message. Verified by compiling and running it against jazzy's `rclcpp`: `Duration::from_seconds(+inf).nanoseconds() = -9223372036854775808`, then `THREW: std::overflow_error: time subtraction leads to int64_t overflow`. The same gap is on the minimum in mirror image: `NaN < 0.0` is false (no clamp) and `NaN >= maximum` is false, so a NaN minimum **passes both checks**, and `buffer_duration.seconds() < NaN` is false forever — the node publishes an unsmoothed single-sample `tide_estimate` and `map_tide` from the first message, which is precisely the configuration the `(0,0)` branch was added this round to refuse. Not a regression (the old form had the same hole), but the comment is new and the branch shows it knows the idiom — `lake_datum` gets an explicit `std::isinf` normalization. `std::isfinite()` on both, and say so in the README row — `mru_transform/include/mru_transform/nodes/sea_surface_estimator.hpp:62-64`, `:80`, `:88`, `README.md`
+- [x] (must-fix) **`shutdown` still releases nothing; the gate treats the symptom.** No node in the package overrides `on_shutdown`, so `shutdown` from `active` *or* `inactive` never runs `on_cleanup`. The new gate stops fresh publications, but the three `transient_local` publishers on `chart_datum_node` (and `tide_estimate` on `sea_surface_estimator`) are never released, so for the rest of the process's life a **late-joining** subscriber still receives `datum_source: vdatum` and a latched MLLW offset from a finalized node — exactly the property round 2 pinned for the cleanup path in `ChartDatumNodeCleanupReleasesItsPublishers` ("a cleaned-up node still latches a datum for late subscribers"), which `shutdown` walks straight past. The new test cannot see it: its subscriber is created *before* the shutdown, so it exercises the fresh-publish path, not the durable history. `recalc_timer_` survives the same way and `recalc_callback` has no gate, so a finalized node keeps doing `earth -> base_link` lookups, PROJ queries, and `RCLCPP_INFO("Datum at (…) [source: …]")` into the operator's console forever. One `on_shutdown` override per node calling the existing release helper closes all of it. (If the operator prefers to hold the line on scope, this is legitimate follow-up-issue material alongside #37/#38 — the live-publishing half is already fixed — but it should be a recorded decision, not an omission.) — `mru_transform/include/mru_transform/nodes/chart_datum_node.hpp:226-230`, `:494`, `sea_surface_estimator.hpp:155-157`
+- [x] (must-fix) **`on_error` went to one node and not to the one that publishes `map_tide`.** `sea_surface_estimator` has the identical member set and construction order and no `on_error`. A throw at or after `create_publisher`/`create_subscription` routes `errorprocessing -> unconfigured` with `tf_buffer_` and `tf_listener_` still set, and `cleanup` is not legal from `unconfigured`. The supported recovery is another configure — whose first act is `tf_buffer_ = std::make_shared<Buffer>(...)`, dropping the last reference to the old Buffer and destroying it while the **old** `tf_listener_` (not reassigned for another six lines) is still alive and writing into it from its dedicated thread through a raw `tf2::BufferCore &`. That is the exact use-after-free this file's own `on_cleanup` comment describes and orders against; the error path has no ordering at all. Same shape without the UAF on `tide_copier` and `nav_sat_fix_to_velocity` (shared_ptrs a retry overwrites). Fix as `chart_datum_node` did: factor the `on_cleanup` body and run it from both — `mru_transform/include/mru_transform/nodes/sea_surface_estimator.hpp:147-153`, `:169-200`
+- [x] (suggestion) `~ChartDatumNode` calls `cleanup_proj()` in the destructor **body**, but `publish_timer_`/`recalc_timer_` are members destroyed only *after* the body returns — reproducing the ordering hazard the helper's own comment names ("a timer outliving the PROJ context it calls into would be a use-after-free"). Benign under the single-threaded executor, a UAF under a composed multi-threaded one, and the new test pins the fact that a node can sit in `finalized` with both timers armed — the state a destructor is most likely called from. Call `release_everything_on_configure_created()` instead — `mru_transform/include/mru_transform/nodes/chart_datum_node.hpp:62-65`
+- [x] (suggestion) `ChartDatumNodeStopsPublishingWhenFinalized` goes straight from `activate()` to a 5 s `sources.size() >= 2` wait, so DDS discovery of the peer's `datum_source` subscription has to complete inside that budget. Every other live case in the file waits up to 15 s for endpoint match *first* — including the `get_publisher_count()` wait this very delta added at `:578-585`. Add the matching `spin_until(..., source_sub->get_publisher_count() > 0, 15s)` before it — `mru_transform/test/test_lifecycle_reconfigure.cpp:465-469`
+- [x] (suggestion) The `(0, 0)` policy is narrower than the rationale it is documented with. `minimum_buffer_duration = 0` with any positive maximum is accepted, and on the first odometry message `0.0 < 0.0` is false — so the node's first published `tide_estimate` and first `map_tide` are the same unsmoothed single sample the policy refuses, latched on a `transient_local` topic. Worse, the README row added this round tells operators a negative minimum "is clamped to 0", steering the documented recovery from one bad value straight into that bucket. Either reject `minimum <= 0` (and clamp to something non-zero), or narrow the rationale to what is actually enforced — `mru_transform/include/mru_transform/nodes/sea_surface_estimator.hpp:88-105`, `README.md:168`
+- [x] (suggestion) The `on_cleanup` comment still says "the **installed** headers now take NodeOptions" — `d6dd5d1` excluded `nodes/` from the install, so they are a source-tree test seam, not installed API. The substance survives (a composed user must keep to a single-threaded executor); the word is stale — `mru_transform/include/mru_transform/nodes/sea_surface_estimator.hpp:178`
+- [x] (suggestion) Pre-existing, surfaced by the same lens and worth a follow-up rather than this PR: `chart_datum_node`'s `publish_rate`/`recalc_interval` checks are `<= 0.0`, so `publish_rate = inf` passes and yields `create_wall_timer(1.0/inf)` — a **zero-period timer**, the core-pegging failure the check exists to stop — and NaN passes into an out-of-range float→integral cast (UB). The rows added to the README this round ("Must be > 0; `on_configure` fails otherwise") are accurate about what is enforced, so this is not a doc defect — `mru_transform/include/mru_transform/nodes/chart_datum_node.hpp:121-132`
 
 ### Specialists
 - Static analysis: **not available** — no CI, no pre-commit, `ament_lint_auto_find_test_dependencies()` finds no registered linters (mru_transform#35). The clean build and full test run above are the only gate and were run here.
@@ -618,3 +618,211 @@ The pattern is diagnostic, though. Round 2 found that a transition can skip its 
 
 ### Actions
 - [ ] Not pushed, no PR opened — the operator gates both.
+
+## Implementation
+**Status**: complete
+**When**: 2026-08-24 10:49 -04:00
+**By**: Claude Code Agent (Claude Opus)
+
+**Branch**: feature/issue-34 at `7cc2c60`
+**Addressed**: `## Local Review (Pre-Push)` (2026-08-24 10:13 -04:00, branch at `253e1f6`) — 4 must-fix + 5 suggestions
+**Commits**: `a963cf2`, `7681b09`, `4459329`, `3e3ac03`, `4301d18`, `ba18cee`, `8bc0360`, `7cc2c60`
+
+Operator decision for this pass: **close all four must-fixes in this branch**,
+including the two the review offered to let me file. Nothing was filed onward.
+
+### The exit-path enumeration — every path, all four nodes
+
+This is the thing the review asked for, and it is the point of the pass: every
+one of the four must-fixes was an instance of *something `on_configure` or
+`on_activate` created is not released on some exit path*. Enumerated from
+source, not from the previous rounds' summaries. **✓ = closed and how; NEW =
+added this pass.**
+
+| Exit path | `chart_datum_node` | `sea_surface_estimator` | `tide_copier` | `nav_sat_fix_to_velocity` |
+|---|---|---|---|---|
+| `deactivate` (active→inactive) | ✓ `on_deactivate` resets both timers — the only thing `on_activate` creates | ✓ nothing to release: `on_activate` allocates nothing (stale `odometry_buffer_` across the gap is the **deferred** #37) | ✓ `on_activate` allocates nothing | ✓ `on_deactivate` clears `last_navsatfix_` |
+| `cleanup` (inactive→unconfigured) | ✓ `release_everything_on_configure_created()` | ✓ same helper (**factored out this pass**) | ✓ same helper (**factored out this pass**) | ✓ same helper (**factored out this pass**) |
+| `shutdown` from **unconfigured** | **NEW** `on_shutdown` → helper (null-safe, nothing allocated yet) | **NEW** | **NEW** | **NEW** |
+| `shutdown` from **inactive** | **NEW** `on_shutdown` → helper | **NEW** | **NEW** | **NEW** |
+| `shutdown` from **active** | **NEW** `on_shutdown` → helper (this is the path that skips *both* `on_deactivate` and `on_cleanup`) | **NEW** | **NEW** | **NEW** |
+| `error` (throw → `errorprocessing`) | ✓ `on_error` → helper (round 2) | **NEW** `on_error` → helper — the use-after-free case | **NEW** | **NEW** |
+| `FAILURE` **return** (no `errorprocessing`, no teardown callback ever runs) | ✓ audited: the two timer-period returns (`:143`, `:149`) precede the first allocation; the datum-config `catch` (`:222`) is after `setup_proj()` and releases explicitly | ✓ audited: all three returns (`:112`, `:120`, `:138`) precede the first allocation at `:179` | ✓ no `FAILURE` return exists | ✓ no `FAILURE` return exists |
+| destructor | **NEW** calls the helper, not just `cleanup_proj()` — member subobjects (both timers) are destroyed only *after* the body returns, so the old form freed the PROJ context while the timers that call into it were still armed | ✓ no destructor needed: `tf_buffer_` is declared at `:590` and `tf_listener_` at `:591`, so reverse-order member destruction tears the listener down first — the ordering the helper enforces explicitly | ✓ two `shared_ptr`s, no ordering hazard | ✓ same |
+
+Every allocation site was re-listed from source and checked against the helper,
+member by member: `chart_datum_node` (PROJ context + both pipelines,
+`datum_entries_`, TF buffer/listener/broadcaster, three latched publishers, two
+wall timers), `sea_surface_estimator` (broadcaster, TF buffer/listener, latched
+`tide_estimate`, odom subscription, plus the lever-arm cache and the odometry
+buffer), `tide_copier` and `nav_sat_fix_to_velocity` (one publisher + one
+subscription each, plus `last_navsatfix_`). Nothing is outside a helper.
+
+**With that closed, the class is closed at the cause.** The four state guards in
+the callbacks are now the *second* gate rather than the fix, and the comments
+say so — see must-fix 1.
+
+### Must-fix 1 — the rationale was false; corrected, and the gap it exposed is pinned
+
+Verified in `/opt/ros/jazzy/include/rclcpp_lifecycle/.../lifecycle_publisher.hpp`:
+all three `publish()` overloads are declared `virtual` and each returns early on
+`!is_activated()`. The review is right and the old comment was wrong. It was
+*true of `jazzy`*, where `tide_copier` and `nav_sat_fix_to_velocity` held plain
+`rclcpp::Publisher`s, and it went stale when this branch changed the member type.
+Corrected in all five places it appeared: `tide_copier.hpp`,
+`nav_sat_fix_to_velocity.hpp`, `chart_datum_node.hpp`, and the two test-file
+comments that repeated it.
+
+**The mutation experiments, re-run per node rather than generalized.** The
+review's finding was demonstrated on `tide_copier`; it does not hold uniformly,
+and the difference is what the new test had to target. Deleting *only* the state
+guard, one node at a time, rebuilding, and running the suite:
+
+- `nav_sat_fix_to_velocity` — **already pinned.** `NavSatFixToVelocityRespectsLifecycleState`
+  fails ("the first fix cannot yield a velocity"), because the guard returns
+  *before* `last_navsatfix_` is updated, so an inactive fix must not become the
+  reference — something no publisher gate can do. Not a gap; the comment now
+  names this as the reason the check is kept.
+- `sea_surface_estimator` — **not pinned; this was the real gap.** 86/86 passed
+  with the guard gone. It is also the node where the guard is the *only* gate
+  that exists: `transform_broadcaster_` is a plain `tf2_ros::TransformBroadcaster`
+  with no activation gate whatsoever, and subscriptions are not lifecycle-gated,
+  so a configured-but-inactive node receives odometry and broadcasts `map_tide`
+  from it. New case `SeaSurfaceEstimatorDoesNotBroadcastWhenInactive`
+  (`minimum_buffer_duration:=0` so one message decides it). **Mutation-checked:**
+  with only the guard removed it fails alone —
+  *"a configured-but-inactive node broadcast 1 sea surface transform(s)"* — and
+  no other case fails. Tree verified clean afterwards.
+- `tide_copier` and `chart_datum_node` — **honestly, their guards are now
+  redundant and no test can isolate them.** Both publish only through
+  `LifecyclePublisher`s (`chart_datum_node`'s `tf_broadcaster_` is the exception,
+  and it sits inside the same gated region), so the publisher's own gate covers
+  `inactive`; and now that `on_shutdown` releases the subscription/timers, the
+  `shutdown`-from-`active` path that made them load-bearing no longer reaches
+  the callback at all. They are kept as one-line defence in depth — the member
+  type could change back, and a composed multi-threaded executor could dispatch
+  a timer created in `on_activate` before the transition completes — and the
+  comments state exactly that rather than claiming a mechanism. **This is stated
+  plainly rather than papered over with a test that would only re-pin
+  `on_shutdown`.**
+
+### Must-fix 2 — non-finite bounds
+
+Both directions confirmed against the review's account. `+inf` passed
+`!(max >= 0.0)`; the comment added last round claiming that check covered
+non-finite maxima was wrong. `std::isfinite()` now gates **both** parameters,
+before every other check, with the negative-maximum test simplified back to
+`max < 0.0` (finiteness having already run). Two new cases inside
+`SeaSurfaceEstimatorRejectsUnusableBufferDurations`, one per bound:
+`maximum_buffer_duration:=.inf` and `minimum_buffer_duration:=.nan`.
+**Mutation-checked** by disabling the finiteness branch: both report
+(*"an infinite maximum_buffer_duration was accepted"*, *"a NaN
+minimum_buffer_duration was accepted"*), that case fails alone, restored clean.
+README documents it as a third rejection class with the operational
+consequence — a boat that configures, activates, and then **dies on its first
+odometry message**.
+
+### Must-fix 3 — `shutdown`
+
+`on_shutdown` added to all four nodes, each calling that node's existing
+(or newly factored) release helper. Four new cases via one shared
+`expect_shutdown_releases_endpoints()` helper, all going `configure → activate →
+shutdown` so they take the worst path. **Mutation-checked** by stripping all
+four overrides at once: exactly the four target cases fail
+(`ChartDatumNodeShutdownReleasesItsPublishers`,
+`SeaSurfaceEstimatorShutdownReleasesItsEndpoints`,
+`TideCopierShutdownReleasesItsEndpoints`,
+`NavSatFixToVelocityShutdownReleasesItsEndpoints`) and nothing else does — each
+one failing on its own node's missing override. Restored, tree clean, suite
+green. Note the consequence the review predicted and this confirms:
+`ChartDatumNodeStopsPublishingWhenFinalized` now passes under *either* fix
+alone, so it pins the pair; the four new endpoint cases are what pin
+`on_shutdown` specifically.
+
+### Must-fix 4 — `on_error`
+
+Added to `sea_surface_estimator`, `tide_copier` and `nav_sat_fix_to_velocity`,
+each calling the same helper `on_cleanup` uses (`chart_datum_node` had one from
+round 2). The `sea_surface_estimator` comment records the mechanism the review
+adjudicated: a retry-configure reassigns `tf_buffer_` first, destroying the
+Buffer while the **old** `tf_listener_` — not reassigned for another few lines —
+is still writing into it from its own thread through a raw `tf2::BufferCore &`.
+That is a use-after-free, not a leak.
+
+**No test, for the reason round 2 accepted for the same path on
+`chart_datum_node` and re-verified here**: nothing in these `on_configure`s can
+be made to *throw* from an in-process fixture. Every parameter is declared
+before the first allocation, so a type-mismatch override throws too early to
+strand anything; the topic names are fixed, so no remap can make
+`create_publisher`/`create_subscription` fail. Reviewed by reading instead: each
+helper is null-safe, re-nulls what it releases, and is therefore idempotent
+across `on_cleanup` → `on_error` → destructor in any order.
+
+### Suggestions — all five taken, none deferred, none filed onward
+
+- **Destructor ordering** (`~ChartDatumNode`) — now calls the release helper.
+- **Discovery wait** — `ChartDatumNodeStopsPublishingWhenFinalized` waits up to
+  15 s for `source_sub->get_publisher_count() > 0` before spending its 5 s
+  traffic budget, matching every other live case in the file.
+- **`(0, 0)` rationale narrower than enforced** — took the *narrow-the-rationale*
+  half, not the reject-`minimum <= 0` half, which would expand the policy and
+  the branch. Comment, log message, test comment and README now say what is
+  actually enforced: `minimum = 0` with a positive maximum **is** accepted and
+  its first estimate is unsmoothed too, but the window then fills, so that is a
+  start-up transient; `(0, 0)` is unsmoothed *permanently*. The README's
+  clamped-to-0 row now says so rather than steering an operator into it.
+- **Stale "installed headers"** — corrected: `nodes/` is excluded from the
+  install, so they are a source-tree test seam that happens to take `NodeOptions`.
+- **`publish_rate = inf`** — the review flagged this as follow-up material. Taken
+  here instead: it is the same defect class as must-fix 2, two lines, and the
+  failure it prevents is a **zero-period timer pegging a core** on the datum
+  node. `std::isfinite()` on `publish_rate` and `recalc_interval`, new case
+  `ChartDatumNodeRejectsNonFiniteTimerPeriods`, **mutation-checked** by
+  reverting to the bare `<= 0.0` form (fails alone, restored clean), README rows
+  updated.
+
+### Verification (run fresh, not carried over)
+
+No CI, no pre-commit, and `ament_lint_auto_find_test_dependencies()` finds no
+registered linters (mru_transform#35), so this local run is the entire gate. Run
+after the last commit.
+
+- **Clean rebuild** — `platforms_ws/build/mru_transform` and
+  `platforms_ws/install/mru_transform` removed first: **0 errors**, and **0
+  warnings in any changed file** (the only warnings are the pre-existing
+  unused-parameter in untouched `src/mru_transform.cpp` and vendored
+  `geodesy/geodesics.h`).
+- `./platforms_ws/test.sh mru_transform` — **92 tests, 0 errors, 0 failures, 0
+  skipped** in ~11 s (86 before this pass; +6 = one guard case, four shutdown
+  cases, one non-finite-timer case. The two non-finite buffer-duration cases are
+  blocks inside the existing `SeaSurfaceEstimatorRejectsUnusableBufferDurations`,
+  so they add no case count).
+- **Every new regression test mutation-checked against the specific bug it
+  targets**, each failing alone, with the tree verified clean after each
+  restore — detailed per finding above.
+- `ROS_LOCALHOST_ONLY is deprecated` still appears **0** times in the test log.
+- **Header install still excludes `nodes/`** after the clean rebuild: the
+  installed `include/mru_transform/mru_transform/` carries the 12 pre-existing
+  headers and no `nodes/` directory.
+- Working tree clean; commit identity correct on all 40 commits.
+
+### Actions
+- [x] (must-fix) The rationale justifying all four lifecycle guards is false, and two guards are pinned by no test — `tide_copier.hpp`, `nav_sat_fix_to_velocity.hpp`, `chart_datum_node.hpp`, `test_lifecycle_reconfigure.cpp` — `a963cf2` (comments corrected in all five places; `SeaSurfaceEstimatorDoesNotBroadcastWhenInactive` added and mutation-checked; per-node re-verification recorded above)
+- [x] (must-fix) Non-finite buffer durations pass validation and kill the node; the comment claims otherwise — `sea_surface_estimator.hpp`, `README.md`, `test_lifecycle_reconfigure.cpp` — `7681b09` (`std::isfinite()` on both bounds, one pinned case per bound, mutation-checked)
+- [x] (must-fix) `shutdown` releases nothing — `all four node headers`, `test_lifecycle_reconfigure.cpp` — `4459329` (`on_shutdown` on all four calling the release helper; four endpoint cases, mutation-checked together, exactly four failures)
+- [x] (must-fix) `on_error` missing from the node that publishes `map_tide` — `sea_surface_estimator.hpp`, `tide_copier.hpp`, `nav_sat_fix_to_velocity.hpp` — `3e3ac03` (added to all three; no test, for the reason round 2 accepted and this pass re-verified)
+- [x] (suggestion) `~ChartDatumNode` frees PROJ before the timers that call into it are destroyed — `chart_datum_node.hpp:62-65` — `4301d18`
+- [x] (suggestion) `ChartDatumNodeStopsPublishingWhenFinalized` skips the endpoint-match wait every other live case does — `test_lifecycle_reconfigure.cpp` — `ba18cee`
+- [x] (suggestion) The `(0, 0)` policy is narrower than the rationale it carries — `sea_surface_estimator.hpp`, `README.md:168`, `test_lifecycle_reconfigure.cpp` — `8bc0360` (rationale narrowed to what is enforced; `minimum <= 0` deliberately NOT rejected — that would expand the policy)
+- [x] (suggestion) Stale "installed headers" wording — `sea_surface_estimator.hpp` — `ba18cee`
+- [x] (suggestion) `publish_rate = inf` yields a zero-period timer; NaN is UB — `chart_datum_node.hpp:121-132` — `ba18cee` (taken here rather than filed: same class, two lines, core-pegging failure)
+
+### Not pushed
+The host performs pushes; no PR opened. The PR body should carry, beyond the
+issue's text: the lifecycle-publisher fix, the `tide_copier` build target, the
+two round-1 follow-ups ([#37](https://github.com/rolker/mru_transform/issues/37),
+[#38](https://github.com/rolker/mru_transform/issues/38)), the operator-visible
+policy change that `(min=0, max=0)` is now refused, and — new this pass — that
+`maximum_buffer_duration`/`minimum_buffer_duration`/`publish_rate`/
+`recalc_interval` now reject non-finite values that previously configured
+cleanly.
