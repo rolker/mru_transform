@@ -101,6 +101,13 @@ ament_target_dependencies(${PROJECT_NAME}
 install(
   DIRECTORY include/
   DESTINATION include/${PROJECT_NAME}
+  # nodes/ holds the four LifecycleNode classes, extracted so the in-process
+  # lifecycle tests can construct them. They are not API: they sit in the
+  # global namespace, and chart_datum_node.hpp includes proj.h, which this
+  # package does not export -- so shipping them would offer downstream code a
+  # header that cannot compile. Keep them out of the installed include tree.
+  # (#34)
+  PATTERN "nodes" EXCLUDE
 )
 
 install(
