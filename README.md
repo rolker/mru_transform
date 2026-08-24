@@ -165,8 +165,8 @@ published after configuring this parameter.
 |---|---|---|
 | `sea_surface_frame` | `map_tide` | Child frame of the broadcast sea-surface transform. |
 | `water_line_frame` | `""` | URDF frame at the water line. Empty disables the correction (see above). |
-| `minimum_buffer_duration` | `5.0` | Seconds of odometry required before anything is published. Must be **strictly less than** `maximum_buffer_duration` or `on_configure` fails (see below). A negative value is clamped to 0 — note that `ros2 param get` still reports the number you set, not the clamped 0 the node is using. |
-| `maximum_buffer_duration` | `30.0` | Seconds of odometry kept in the averaging window. A negative value fails `on_configure` (see below). |
+| `minimum_buffer_duration` | `5.0` | Seconds of odometry required before anything is published. Must be finite and **strictly less than** `maximum_buffer_duration` or `on_configure` fails (see below). A negative value is clamped to 0 — note that `ros2 param get` still reports the number you set, not the clamped 0 the node is using, and that a clamped 0 means the first estimate after every configure is a single unsmoothed sample. |
+| `maximum_buffer_duration` | `30.0` | Seconds of odometry kept in the averaging window. Must be finite; a negative or non-finite value fails `on_configure` (see below). |
 | `chart_datum_frame` | `chart_datum` | MLLW frame used for the plausibility bound. Empty disables the bound. |
 | `mhhw_frame` | `chart_datum_mhhw` | MHHW frame used for the plausibility bound. Empty disables the bound. |
 | `tide_range_margin` | `2.0` | Multiplier on the MLLW→MHHW range allowed beyond each end (storm surge, extreme tides). Negative values are clamped to 0. |
@@ -180,8 +180,17 @@ rejected rather than averaged — a NaN would pass straight through the bound
 
 ### Buffer durations that fail `on_configure`
 
-`on_configure` refuses two kinds of averaging window, for two different reasons:
+`on_configure` refuses three kinds of averaging window, for three different
+reasons:
 
+- **A non-finite bound** (`.inf`, `-.inf`, `.nan`, on either parameter) is
+  refused because neither is survivable and neither is visible. An infinite
+  maximum overflows `rclcpp::Duration::from_seconds()`, and the node then dies
+  with an uncaught `std::overflow_error` on its **first odometry message** — a
+  boat that configures, activates, and then disappears. A NaN on either bound is
+  worse-behaved still: every comparison against NaN is false, so a NaN minimum
+  passes both checks below and silently disables the smoothing requirement
+  entirely.
 - **A negative `maximum_buffer_duration`** is a correctness bug. The retention
   prune drops samples older than `now - maximum_buffer_duration`, so a negative
   maximum puts that cutoff *after* `now` and erases each sample as it arrives.

@@ -17,6 +17,8 @@
 #include <thread>
 #include <vector>
 
+#include <limits>
+
 #include <geometry_msgs/msg/twist_stamped.hpp>
 #include <gtest/gtest.h>
 #include <lifecycle_msgs/msg/state.hpp>
@@ -222,6 +224,12 @@ TEST_F(LifecycleReconfigureTest, SeaSurfaceEstimatorKeepsOperatorParameter)
 // The two buffer durations bound the averaging window and were the only
 // numeric parameters in either node with no validation at all. The three cases
 // below are rejected for two different reasons:
+//   * a NON-FINITE bound on either parameter is refused because it is fatal and
+//     invisible: +inf overflows rclcpp::Duration::from_seconds() (the cast to
+//     int64_t yields INT64_MIN) and the prune's `now - Duration` then throws
+//     std::overflow_error out of the odometry callback, killing the node on its
+//     first message; a NaN passes every comparison it appears in, so a NaN
+//     minimum disables the smoothing requirement outright;
 //   * a NEGATIVE maximum is a correctness bug -- it puts the prune cutoff after
 //     `now`, erasing the sample just inserted, and the callback then
 //     dereferenced odometry_buffer_.begin() on an empty map (undefined
@@ -266,6 +274,45 @@ TEST_F(LifecycleReconfigureTest, SeaSurfaceEstimatorRejectsUnusableBufferDuratio
     EXPECT_EQ(node->get_current_state().id(), kUnconfigured)
       << "a minimum_buffer_duration at the maximum was accepted; the window "
          "can never be long enough and the node would never publish";
+  }
+
+  // Non-finite bounds, both directions. +inf passed the `>= 0.0` check that
+  // was supposed to catch it and killed the node on the first odometry
+  // message; a NaN minimum passed BOTH checks (`NaN < 0.0` and
+  // `NaN >= maximum` are each false) and left the node publishing the
+  // unsmoothed single sample the (0, 0) case below refuses. Each is pinned on
+  // its own parameter, because the two checks are separate.
+  {
+    auto options = isolated_options();
+    options.parameter_overrides(
+      {
+        rclcpp::Parameter(
+          "maximum_buffer_duration", std::numeric_limits<double>::infinity()),
+      });
+    auto node = std::make_shared<SeaSurfaceEstimator>(options);
+
+    ASSERT_NO_THROW(node->configure());
+    EXPECT_EQ(node->get_current_state().id(), kUnconfigured)
+      << "an infinite maximum_buffer_duration was accepted; "
+         "rclcpp::Duration::from_seconds(inf) is INT64_MIN and the prune then "
+         "throws std::overflow_error out of the odometry callback";
+  }
+
+  {
+    auto options = isolated_options();
+    options.parameter_overrides(
+      {
+        rclcpp::Parameter(
+          "minimum_buffer_duration",
+          std::numeric_limits<double>::quiet_NaN()),
+      });
+    auto node = std::make_shared<SeaSurfaceEstimator>(options);
+
+    ASSERT_NO_THROW(node->configure());
+    EXPECT_EQ(node->get_current_state().id(), kUnconfigured)
+      << "a NaN minimum_buffer_duration was accepted; it is neither clamped "
+         "(NaN < 0.0 is false) nor rejected (NaN >= maximum is false), so the "
+         "node publishes an unsmoothed single sample forever";
   }
 
   // The boundary, pinned because it is a POLICY call rather than a mechanical

@@ -55,13 +55,25 @@ public:
     // chart_datum_node. The two rejections below are rejections for DIFFERENT
     // reasons, and it is worth being exact about which is which.
     //
+    // NON-FINITE is its own rejection and has to be checked explicitly, first.
+    // This comment used to claim the non-negative check below covered it. It
+    // does not: `!(NaN >= 0.0)` is true so NaN failed that check, but
+    // `+inf >= 0.0` is TRUE, so an infinite maximum configured cleanly -- and
+    // rclcpp::Duration::from_seconds(+inf) casts inf to int64_t (INT64_MIN in
+    // practice), after which `now - Duration(INT64_MIN)` in the prune below
+    // throws std::overflow_error out of odometry_callback, out of
+    // rclcpp::spin, and kills the node on its first odometry message. A NaN
+    // MINIMUM slipped through in mirror image: `NaN < 0.0` is false so it is
+    // not clamped, `NaN >= maximum` is false so it is not rejected, and
+    // `buffer_duration.seconds() < NaN` is false forever -- so the node
+    // publishes exactly the unsmoothed single sample the (0, 0) branch below
+    // exists to refuse. std::isfinite() on both closes both.
+    //
     // A NEGATIVE maximum is a correctness bug. The prune erases while
     // `begin()->first < now - maximum`, so a negative maximum puts the cutoff
     // *after* `now` and erases the sample just inserted; the callback then
     // dereferenced odometry_buffer_.begin() on an empty map, which is
-    // undefined behaviour, not a missing publication. (A non-finite maximum is
-    // rejected by the same check, which is written as a negated >= so NaN
-    // fails it.)
+    // undefined behaviour, not a missing publication.
     //
     // A ZERO maximum is NOT that, and the earlier claim that it emptied the
     // buffer was simply wrong: the comparison is `<`, so at maximum == 0 the
@@ -77,7 +89,20 @@ public:
     // Both fail the transition rather than being clamped: configure can be
     // retried, and the parameters survive the failure so the corrected value
     // is what the retry reads. (#34)
-    if (!(maximum_buffer_duration_ >= 0.0)) {
+    if (!std::isfinite(minimum_buffer_duration_) ||
+      !std::isfinite(maximum_buffer_duration_))
+    {
+      RCLCPP_ERROR(
+        get_logger(),
+        "minimum_buffer_duration (%f) and maximum_buffer_duration (%f) must "
+        "both be finite. An infinite duration overflows "
+        "rclcpp::Duration::from_seconds() and then throws std::overflow_error "
+        "out of the odometry callback; a NaN passes silently through every "
+        "comparison it appears in",
+        minimum_buffer_duration_, maximum_buffer_duration_);
+      return CallbackReturn::FAILURE;
+    }
+    if (maximum_buffer_duration_ < 0.0) {
       RCLCPP_ERROR(
         get_logger(),
         "maximum_buffer_duration must be a non-negative number (got %.3f); "
