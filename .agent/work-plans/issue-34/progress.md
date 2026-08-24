@@ -1003,3 +1003,118 @@ local run is the only gate, per the round-4 entry.
 - Working tree verified clean after every mutation; all commits authored
   `Claude Code Agent <roland+claude-code@ccom.unh.edu>`.
 - Not pushed and no PR opened — the operator gates both.
+
+## Integrated Review
+**Status**: complete
+**When**: 2026-08-24 11:35 -04:00
+**By**: Claude Code Agent (Claude Opus)
+
+**PR**: #40 at `b1c4a05`
+**Sources**: 2 (Copilot R1 @ `b1c4a05`; local timeline rounds 1-4 @ `ab13c8f`/`4459329`/`4301d18`/`97948ba`)
+**Cross-source confirmations**: 0
+**CI**: no CI on this repo (mru_transform#35). The one check-run reported is
+`copilot-pull-request-reviewer` (the reviewer bot itself, `success`) — not a
+build or lint gate. Local run at `b1c4a05` is the whole gate and was executed
+here: build 0 errors, **93 tests, 0 errors, 0 failures, 0 skipped**.
+
+### The shape of this round
+
+Copilot posted one `COMMENTED` review against the current head with 5 inline
+comments and **no conversation comments**. All five are the same finding class —
+missing standard-library includes in files this PR creates — and all five are
+**valid**. Nothing Copilot raised touches the five items the local rounds settled
+deliberately (`has_parameter()` guards over `undeclare_parameter()`; the
+`(min=0, max=0)` rejection as operator policy; `on_error` untested on three of
+four nodes; the unisolatable `tide_copier`/`chart_datum_node` state guards; the
+#37/#38/#39 deferrals). There is therefore **no false positive to dismiss this
+round**, and no finding that reopens settled ground.
+
+Nor is this a repeat of anything the four local rounds found: those were
+correctness, lifecycle-exit-path and documentation-accuracy findings, and none of
+them looked at include hygiene (grepped the whole timeline for
+include/header/IWYU — no prior entry raises it). Copilot found a real class the
+local rounds missed. Zero cross-source confirmations here means "a genuinely new
+class," not "weak signal."
+
+### Verified at source, per file — comments stripped before counting
+
+Inventoried every `std::` identifier in each flagged file with comments and
+strings discounted (`gcc -fpreprocessed -dD -E -P`), so no finding rests on a
+symbol that only appears in prose. Copilot is correct in all five, and **one of
+the five is incomplete**:
+
+- `nodes/tide_copier.hpp` — `std::bind`/`std::placeholders` at `:37`; includes
+  `<string>` but **not `<functional>`**. Claim exact.
+- `nodes/nav_sat_fix_to_velocity.hpp` — `std::bind`/`std::placeholders` `:42`,
+  `std::string` `:170`; includes **no** standard header at all. Claim exact.
+- `nodes/chart_datum_node.hpp` — `std::chrono` `:256`, `std::bind` `:257`,
+  `std::make_shared` `:234`, `std::shared_ptr` `:667`, none of `<chrono>`,
+  `<functional>`, `<memory>` included. Claim correct **but short one**:
+  `catch (const std::exception & e)` at `:210` needs `<exception>`, which
+  Copilot did not name. Adding only what the bot listed leaves the file still
+  incomplete.
+- `test/test_lifecycle_reconfigure.cpp` — `std::uint8_t` at `:40-44`, no
+  `<cstdint>`. Claim exact. (`std::overflow_error`/`std::invalid_argument` here
+  are comment and string-literal text only — **not** real uses, so no
+  `<stdexcept>` is owed. Checked rather than assumed.)
+- `nodes/sea_surface_estimator.hpp` — includes only `<cmath>`; real uses of
+  `std::bind`/`std::placeholders` `:194`, `std::map` `:549`, `std::make_shared`
+  `:179`, `std::shared_ptr` `:588`, `std::string` `:422`. Claim exact.
+  (`std::overflow_error` at `:64`/`:108` is comment and log-string text only.)
+
+**Latent, not live.** The package builds clean at `b1c4a05` and all 93 tests
+pass, so today's transitive includes from `rclcpp`/`rclcpp_lifecycle` do satisfy
+every one of these. That is exactly the brittleness being flagged: the files
+compile on this toolchain, on this rosdistro, until an upstream header drops an
+include. Not a reason to defer — a reason it will surface somewhere other than
+here.
+
+### Why this is a valid finding and not linter pedantry
+
+Three independent reasons, none of them "the bot said so":
+
+1. **It is the repo's own convention for new code.** The package's recently
+   written headers already do this: `datum_config.hpp`,
+   `navigation_source_selection.hpp` (`<cstddef>`, `<vector>`),
+   `twist_rotation_utils.hpp` (`<array>`), `water_line_lever_arm.hpp`
+   (`<cmath>`, `<string>`). Only the older headers (`map_frame.hpp`,
+   `sensor.hpp`, `position_sensor.hpp`) lean on transitive includes. The four
+   node headers this PR adds are new files and landed on the wrong side of that
+   line.
+2. **ADR-0008 (follow ROS 2 official conventions).** `build/include_what_you_use`
+   is a cpplint rule in the ament style set; these five would each be a lint
+   error in any package that registers the linters.
+3. **It is a direct instance of mru_transform#35.** `CMakeLists.txt:374-375`
+   calls `ament_lint_auto_find_test_dependencies()` while `package.xml` has a
+   single `<test_depend>ament_cmake_gtest</test_depend>` — no
+   `ament_lint_common`, so **zero** linters are registered and the macro finds
+   nothing. Copilot is standing in for the linter this repo does not have, and
+   the fact that it found five real instances on the first PR that adds
+   substantial new source is evidence for #35's priority, not against this
+   finding. Worth recording on #35.
+
+### Recommendation on scope
+
+Round 4 closed with "do not run a fifth round," and that judgment was about
+*design and correctness convergence* — which still holds; Copilot found nothing
+about the fix, the lifecycle enumeration, or the tests. The include fix is a
+different thing: ~11 added `#include` lines across five files this PR itself
+created, no behaviour change, no comment or logic edit. Declining it would leave
+a known-incomplete new file in the tree to satisfy a round-counting rule, which
+"a change includes its consequences" does not support. Fix here; a rebuild plus
+the 93-test suite is sufficient verification, not a fifth review round.
+
+### Findings
+- [ ] (must-fix, Copilot R1) `nodes/nav_sat_fix_to_velocity.hpp` includes no standard header at all: add `<functional>` (`std::bind`/`std::placeholders` `:42`) and `<string>` (`:170`) — `mru_transform/include/mru_transform/nodes/nav_sat_fix_to_velocity.hpp`
+- [ ] (must-fix, Copilot R1) `nodes/sea_surface_estimator.hpp` includes only `<cmath>`: add `<functional>`, `<map>`, `<memory>`, `<string>` — `mru_transform/include/mru_transform/nodes/sea_surface_estimator.hpp`
+- [ ] (must-fix, Copilot R1 + this triage) `nodes/chart_datum_node.hpp`: add `<chrono>`, `<functional>`, `<memory>` as Copilot names, **plus `<exception>`** for the `catch (const std::exception &)` at `:210` that Copilot missed — `mru_transform/include/mru_transform/nodes/chart_datum_node.hpp`
+- [ ] (must-fix, Copilot R1) `nodes/tide_copier.hpp`: add `<functional>` — `mru_transform/include/mru_transform/nodes/tide_copier.hpp`
+- [ ] (suggestion, Copilot R1) `test/test_lifecycle_reconfigure.cpp`: add `<cstdint>` for `std::uint8_t` — `mru_transform/test/test_lifecycle_reconfigure.cpp`
+- [ ] (suggestion, this triage) Record on mru_transform#35 that Copilot's first pass over this PR found five include-hygiene defects a registered `ament_cmake_cpplint` would have caught pre-push — concrete cost evidence for wiring the linters
+- [ ] (suggestion, this triage) After the includes land: rebuild clean + full suite (expect 93/93), then re-request a Copilot review; do **not** run a fifth local review round
+
+### False positives
+- None. All five Copilot comments verify at source, and none re-raises an item the local rounds settled (`has_parameter()` vs `undeclare_parameter()`, the `(0,0)` policy rejection, the `on_error` testability scope, the unisolatable `tide_copier`/`chart_datum_node` guards, or the #37/#38/#39 deferrals).
+
+### Actions
+- [ ] Nothing pushed, nothing resolved or dismissed on the PR, no merge — the operator gates all three.
