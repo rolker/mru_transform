@@ -95,8 +95,8 @@ The active source is logged on change and published on the latched
 | `datum_config_path` | `""` | Path to a polygon→datum YAML (see `config/datum_polygons.example.yaml`). Empty = none. A malformed file fails `on_configure`. |
 | `lake_datum` | NaN (unset) | Fixed `chart_datum` height (m, rel. ellipsoid) that overrides VDatum/config everywhere. For quick one-offs/testing. |
 | `lake_datum_mhhw` | NaN (unset) | Optional fixed MHHW height to accompany `lake_datum`. |
-| `recalc_interval` | `60.0` | Seconds between position-based datum recomputes. |
-| `publish_rate` | `1.0` | Hz at which cached transforms are republished. |
+| `recalc_interval` | `60.0` | Seconds between position-based datum recomputes. Must be finite and > 0; `on_configure` fails otherwise. |
+| `publish_rate` | `1.0` | Hz at which cached transforms are republished. Must be finite and > 0; `on_configure` fails otherwise. An infinite rate would arm a zero-period timer. |
 
 ### Config file
 
@@ -165,8 +165,8 @@ published after configuring this parameter.
 |---|---|---|
 | `sea_surface_frame` | `map_tide` | Child frame of the broadcast sea-surface transform. |
 | `water_line_frame` | `""` | URDF frame at the water line. Empty disables the correction (see above). |
-| `minimum_buffer_duration` | `5.0` | Seconds of odometry required before anything is published. |
-| `maximum_buffer_duration` | `30.0` | Seconds of odometry kept in the averaging window. |
+| `minimum_buffer_duration` | `5.0` | Seconds of odometry required before anything is published. Must be finite and **strictly less than** `maximum_buffer_duration` or `on_configure` fails (see below). A negative value is clamped to 0 — note that `ros2 param get` still reports the number you set, not the clamped 0 the node is using, and that a clamped 0 means the first estimate after every configure is a single unsmoothed sample. |
+| `maximum_buffer_duration` | `30.0` | Seconds of odometry kept in the averaging window. Must be finite; a negative or non-finite value fails `on_configure` (see below). |
 | `chart_datum_frame` | `chart_datum` | MLLW frame used for the plausibility bound. Empty disables the bound. |
 | `mhhw_frame` | `chart_datum_mhhw` | MHHW frame used for the plausibility bound. Empty disables the bound. |
 | `tide_range_margin` | `2.0` | Multiplier on the MLLW→MHHW range allowed beyond each end (storm surge, extreme tides). Negative values are clamped to 0. |
@@ -177,6 +177,53 @@ either parameter is empty) it is disabled and every estimate is accepted.
 Odometry samples with a non-finite `position.z`, and non-finite attitudes, are
 rejected rather than averaged — a NaN would pass straight through the bound
 (every comparison against NaN is false) and latch on `tide_estimate`.
+
+### Buffer durations that fail `on_configure`
+
+`on_configure` refuses three kinds of averaging window, for three different
+reasons:
+
+- **A non-finite bound** (`.inf`, `-.inf`, `.nan`, on either parameter) is
+  refused because neither is survivable and neither is visible. An infinite
+  maximum overflows `rclcpp::Duration::from_seconds()`, and the node then dies
+  with an uncaught `std::overflow_error` on its **first odometry message** — a
+  boat that configures, activates, and then disappears. A NaN on either bound is
+  worse-behaved still: every comparison against NaN is false, so a NaN minimum
+  passes both checks below and silently disables the smoothing requirement
+  entirely.
+- **A negative `maximum_buffer_duration`** is a correctness bug. The retention
+  prune drops samples older than `now - maximum_buffer_duration`, so a negative
+  maximum puts that cutoff *after* `now` and erases each sample as it arrives.
+- **`minimum_buffer_duration >= maximum_buffer_duration`** is refused as
+  **policy**. The `(0, 0)` boundary is the case worth being clear about: it used
+  to *work* — the prune keeps the just-arrived sample, so the node published the
+  instantaneous height with no smoothing at all — and it is refused anyway,
+  because this node exists to average and the tide feeds every sounding. Any
+  other pair with the minimum at or above the maximum describes a window that
+  can never be long enough, so the node would sit there silently never
+  publishing.
+
+  Note what this does **not** refuse: `minimum_buffer_duration = 0` with a
+  positive maximum is accepted, and its first estimate after every configure is
+  a single unsmoothed sample as well — latched on `tide_estimate`. The
+  difference is that the window then fills and the node starts averaging, so
+  that is a start-up transient; at `(0, 0)` the node is unsmoothed permanently.
+  Set a minimum you actually want to average over rather than relying on the
+  negative-value clamp above to land on 0.
+
+Correct the parameter and `configure` again: the transition is retryable and the
+parameters survive the failure, so the corrected value is what the retry reads.
+
+**A failed configure is a quiet failure, not an interlock.** It leaves the
+process **up** in `unconfigured`, publishing no `map_tide` and no
+`tide_estimate`, having logged one `ERROR` line in the startup chatter.
+`launch_ros`'s `LifecycleTransition` matches neither `inactive` nor
+`errorprocessing` on a `FAILURE`, so nothing chains off it, nothing announces
+that transitions have stopped, and `respawn` never fires. Nobody should read
+"the node refuses to configure" as the boat being stopped — check
+`ros2 lifecycle get <node>` when a node comes up silent. The same is true of
+`chart_datum_node`'s `publish_rate` / `recalc_interval` validation and of a
+malformed `datum_config_path`.
 
 ## Credits
 

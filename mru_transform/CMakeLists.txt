@@ -12,6 +12,7 @@ find_package(ament_cmake REQUIRED)
 find_package(geodesy REQUIRED)
 find_package(geographic_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
+find_package(lifecycle_msgs REQUIRED)
 find_package(mru_transform_interfaces REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(rclcpp REQUIRED)
@@ -21,6 +22,7 @@ find_package(std_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
+find_package(tf2_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
 
 find_package(PkgConfig REQUIRED)
@@ -99,6 +101,13 @@ ament_target_dependencies(${PROJECT_NAME}
 install(
   DIRECTORY include/
   DESTINATION include/${PROJECT_NAME}
+  # nodes/ holds the four LifecycleNode classes, extracted so the in-process
+  # lifecycle tests can construct them. They are not API: they sit in the
+  # global namespace, and chart_datum_node.hpp includes proj.h, which this
+  # package does not export -- so shipping them would offer downstream code a
+  # header that cannot compile. Keep them out of the installed include tree.
+  # (#34)
+  PATTERN "nodes" EXCLUDE
 )
 
 install(
@@ -150,6 +159,7 @@ add_executable(
 )
 
 target_link_libraries(sea_surface_estimator
+  ${lifecycle_msgs_TARGETS}
   rclcpp::rclcpp
   rclcpp_lifecycle::rclcpp_lifecycle
   ${geometry_msgs_TARGETS}
@@ -171,7 +181,12 @@ add_executable(
   nodes/nav_sat_fix_to_velocity.cpp
 )
 
+target_include_directories(nav_sat_fix_to_velocity PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}/include"
+)
+
 target_link_libraries(nav_sat_fix_to_velocity
+  ${lifecycle_msgs_TARGETS}
   rclcpp::rclcpp
   rclcpp_lifecycle::rclcpp_lifecycle
   ${geographic_msgs_TARGETS}
@@ -187,12 +202,35 @@ install(TARGETS nav_sat_fix_to_velocity
 )
 
 
+# tide_copier had no build target at all until #34, although
+# launch/tide_copier_launch.py has always launched executable='tide_copier'.
+add_executable(
+  tide_copier
+  nodes/tide_copier.cpp
+)
+
+target_link_libraries(tide_copier
+  ${lifecycle_msgs_TARGETS}
+  rclcpp::rclcpp
+  rclcpp_lifecycle::rclcpp_lifecycle
+  ${tf2_msgs_TARGETS}
+)
+target_include_directories(tide_copier PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}/include"
+)
+
+install(TARGETS tide_copier
+  DESTINATION lib/${PROJECT_NAME}
+)
+
+
 add_executable(
   chart_datum_node
   nodes/chart_datum_node.cpp
 )
 
 target_link_libraries(chart_datum_node
+  ${lifecycle_msgs_TARGETS}
   datum_config
   rclcpp::rclcpp
   rclcpp_lifecycle::rclcpp_lifecycle
@@ -389,6 +427,56 @@ if(BUILD_TESTING)
   )
   target_include_directories(test_water_line_lever_arm PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
+  )
+
+  # Issue #34: configure -> cleanup -> configure must not throw
+  # ParameterAlreadyDeclaredException, and must keep a parameter value the
+  # operator set on the running node.
+  # The default 60 s ctest TIMEOUT is too tight now: the live cases budget
+  # roughly eight 15 s endpoint-discovery waits, and a two-case failure alone
+  # has been measured at 30 s. Without the headroom a regression surfaces as an
+  # opaque ctest timeout instead of a named gtest failure.
+  ament_add_gtest(test_lifecycle_reconfigure test/test_lifecycle_reconfigure.cpp
+    TIMEOUT 180)
+  target_link_libraries(test_lifecycle_reconfigure
+    ${lifecycle_msgs_TARGETS}
+    datum_config
+    rclcpp::rclcpp
+    rclcpp_lifecycle::rclcpp_lifecycle
+    ${geographic_msgs_TARGETS}
+    ${geometry_msgs_TARGETS}
+    ${nav_msgs_TARGETS}
+    ${sensor_msgs_TARGETS}
+    ${std_msgs_TARGETS}
+    ${tf2_msgs_TARGETS}
+    tf2::tf2
+    tf2_ros::tf2_ros
+    PkgConfig::PROJ
+  )
+  ament_target_dependencies(test_lifecycle_reconfigure
+    geodesy
+  )
+  target_include_directories(test_lifecycle_reconfigure PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/include"
+  )
+  # The live pub/sub cases in this test prove negatives ("an inactive node
+  # published nothing"), so unrelated ROS traffic on the machine could break
+  # them -- or satisfy a subscription-count wait vacuously. Give the test its
+  # own domain and keep discovery on this host; the test additionally namespaces
+  # the nodes it creates itself, so a domain collision still cannot cross-talk.
+  #
+  # Scope of that claim, precisely: this protects against UNRELATED traffic. It
+  # does NOT make two concurrent runs of THIS test independent -- the domain is
+  # hardcoded and LOCALHOST discovery explicitly permits same-host peers, so two
+  # agent worktrees running `colcon test` at the same time share both the domain
+  # and the namespace, and a subscription-count wait can then be satisfied by
+  # the other process. Nor does it apply at all when the gtest binary is run
+  # directly, a normal debugging step; export the same variables by hand.
+  # Discovery-server / static-peer settings inherited from the environment could
+  # otherwise re-join the test to a wider graph regardless of the range, so they
+  # are blanked here too.
+  set_tests_properties(test_lifecycle_reconfigure PROPERTIES
+    ENVIRONMENT "ROS_DOMAIN_ID=89;ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST;ROS_DISCOVERY_SERVER=;ROS_STATIC_PEERS=;FASTRTPS_DEFAULT_PROFILES_FILE=;CYCLONEDDS_URI="
   )
 
   # unh_echoboats_project11#339: strict priority-preference nav-source
