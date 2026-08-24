@@ -21,6 +21,7 @@ find_package(std_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
+find_package(tf2_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
 
 find_package(PkgConfig REQUIRED)
@@ -171,6 +172,10 @@ add_executable(
   nodes/nav_sat_fix_to_velocity.cpp
 )
 
+target_include_directories(nav_sat_fix_to_velocity PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}/include"
+)
+
 target_link_libraries(nav_sat_fix_to_velocity
   rclcpp::rclcpp
   rclcpp_lifecycle::rclcpp_lifecycle
@@ -183,6 +188,27 @@ ament_target_dependencies(nav_sat_fix_to_velocity
 )
 
 install(TARGETS nav_sat_fix_to_velocity
+  DESTINATION lib/${PROJECT_NAME}
+)
+
+
+# tide_copier had no build target at all until #34, although
+# launch/tide_copier_launch.py has always launched executable='tide_copier'.
+add_executable(
+  tide_copier
+  nodes/tide_copier.cpp
+)
+
+target_link_libraries(tide_copier
+  rclcpp::rclcpp
+  rclcpp_lifecycle::rclcpp_lifecycle
+  ${tf2_msgs_TARGETS}
+)
+target_include_directories(tide_copier PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}/include"
+)
+
+install(TARGETS tide_copier
   DESTINATION lib/${PROJECT_NAME}
 )
 
