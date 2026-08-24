@@ -60,18 +60,39 @@ public:
 
   CallbackReturn on_cleanup(const rclcpp_lifecycle::State &state) override
   {
-    navsat_subscription_.reset();
-    velocity_publisher_.reset();
-
-    // Same reasoning as on_deactivate: cleanup is also reachable directly from
-    // inactive, so clear the reference fix here too. (#34)
-    last_navsatfix_ = sensor_msgs::msg::NavSatFix();
-
+    release_everything_on_configure_created();
     // Parameters stay declared on purpose: see on_configure.
     return LifecycleNode::on_cleanup(state);
   }
 
+  // `shutdown` is legal from `unconfigured`, `inactive` AND `active`, and it
+  // runs on_shutdown ONLY -- on_deactivate and on_cleanup are both skipped.
+  // Without this override nothing released what on_configure created, so a
+  // FINALIZED node kept its endpoints up for the rest of the process's life.
+  // The release helper is null-safe and idempotent, so one override is correct
+  // from all three source states. (#34)
+  CallbackReturn on_shutdown(const rclcpp_lifecycle::State &state) override
+  {
+    release_everything_on_configure_created();
+    return LifecycleNode::on_shutdown(state);
+  }
+
 private:
+  // Shared by on_cleanup and on_shutdown: everything on_configure created,
+  // subscription first so no callback can be running against the publisher
+  // released below it (sufficient only under the single-threaded executor this
+  // node's main() uses). Every reset is null-safe and re-nulls, so the helper
+  // is idempotent. Clearing last_navsatfix_ here is the same reasoning as
+  // on_deactivate -- cleanup and shutdown are both reachable directly from
+  // inactive, and a fix from before the gap must never become the reference
+  // for one after it. (#34)
+  void release_everything_on_configure_created()
+  {
+    navsat_subscription_.reset();
+    velocity_publisher_.reset();
+    last_navsatfix_ = sensor_msgs::msg::NavSatFix();
+  }
+
   void navsatfix_callback(const sensor_msgs::msg::NavSatFix::SharedPtr msg)
   {
     // rclcpp_lifecycle::LifecyclePublisher::publish() IS virtual (jazzy

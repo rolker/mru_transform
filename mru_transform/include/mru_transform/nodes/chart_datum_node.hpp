@@ -262,6 +262,21 @@ public:
     return LifecycleNode::on_cleanup(state);
   }
 
+  // `shutdown` is legal from `unconfigured`, `inactive` AND `active`, and it
+  // runs on_shutdown ONLY -- on_deactivate and on_cleanup are both skipped.
+  // Without this override nothing released what on_configure and on_activate
+  // created, so a FINALIZED node kept both timers armed (recalc_callback has
+  // no state gate, so it went on doing earth -> base_link lookups, PROJ
+  // queries and INFO logging forever) and kept all three transient_local
+  // publishers latched, still handing a datum to every late-joining
+  // subscriber. The release helper is null-safe and idempotent, so one
+  // override is correct from all three source states. (#34)
+  CallbackReturn on_shutdown(const rclcpp_lifecycle::State & state) override
+  {
+    release_everything_on_configure_created();
+    return LifecycleNode::on_shutdown(state);
+  }
+
   // An exception thrown out of on_configure or on_activate routes the FSM
   // through `errorprocessing` to `unconfigured` -- and on_cleanup is NOT one of
   // the callbacks that runs on that path, so without this override nothing

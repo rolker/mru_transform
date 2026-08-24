@@ -194,18 +194,44 @@ public:
 
   CallbackReturn on_cleanup(const rclcpp_lifecycle::State &state) override
   {
-    // Release everything on_configure created, in reverse: the subscription
-    // goes first so no callback can be running against members torn down
-    // below it. That ordering is only sufficient under a single-threaded
-    // executor -- shared_ptr::reset() itself synchronizes nothing, so with a
-    // multi-threaded executor a callback already dispatched could still be
-    // running here. Every main() in this package uses a single-threaded
-    // executor; the installed headers now take NodeOptions, so a composed
-    // future user has to keep to that or add real synchronization. (The
-    // one-argument TransformListener does spin a thread of its own regardless
-    // of the executor, so "single-threaded" is a claim about this node's own
-    // callbacks; that thread only fills the buffer, and the reset ordering
-    // below is what makes it safe.)
+    release_everything_on_configure_created();
+    // Parameters are intentionally left declared: see on_configure. An
+    // operator's `ros2 param set` value must survive the cycle, and a value
+    // cannot be staged on an unconfigured node because setting an undeclared
+    // parameter is rejected. (#34)
+    return LifecycleNode::on_cleanup(state);
+  }
+
+  // `shutdown` is legal from `unconfigured`, `inactive` AND `active`, and it
+  // runs on_shutdown ONLY -- on_deactivate and on_cleanup are both skipped.
+  // Without this override nothing released what on_configure created, so a
+  // FINALIZED node kept its endpoints up for the rest of the process's life.
+  // The release helper is null-safe and idempotent, so one override is correct
+  // from all three source states. (#34)
+  CallbackReturn on_shutdown(const rclcpp_lifecycle::State &state) override
+  {
+    release_everything_on_configure_created();
+    return LifecycleNode::on_shutdown(state);
+  }
+
+private:
+  // Shared by on_cleanup and on_shutdown: everything on_configure created,
+  // released in reverse. The subscription goes first so no callback can be
+  // running against members torn down below it. That ordering is only
+  // sufficient under a single-threaded executor -- shared_ptr::reset() itself
+  // synchronizes nothing, so with a multi-threaded executor a callback already
+  // dispatched could still be running here. Every main() in this package uses
+  // a single-threaded executor; the installed headers now take NodeOptions, so
+  // a composed future user has to keep to that or add real synchronization.
+  // (The one-argument TransformListener does spin a thread of its own
+  // regardless of the executor, so "single-threaded" is a claim about this
+  // node's own callbacks; that thread only fills the buffer, and the reset
+  // ordering below is what makes it safe.)
+  //
+  // Every reset is null-safe and re-nulls what it releases, so the helper is
+  // idempotent and correct on a half-built node.
+  void release_everything_on_configure_created()
+  {
     odometry_subscription_.reset();
     tide_estimate_pub_.reset();
     transform_broadcaster_.reset();
@@ -222,14 +248,9 @@ public:
     logged_lever_arm_ = false;
     odometry_buffer_.clear();
     buffered_child_frame_id_.clear();
-
-    // Parameters are intentionally left declared: see on_configure. An
-    // operator's `ros2 param set` value must survive the cycle, and a value
-    // cannot be staged on an unconfigured node because setting an undeclared
-    // parameter is rejected. (#34)
-    return LifecycleNode::on_cleanup(state);
   }
 
+public:
   void odometry_callback(const nav_msgs::msg::Odometry::SharedPtr msg)
   {
     if (get_current_state().id() != lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE)

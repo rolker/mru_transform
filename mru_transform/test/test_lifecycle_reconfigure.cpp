@@ -172,6 +172,44 @@ sensor_msgs::msg::NavSatFix make_fix(double seconds, double latitude)
   return fix;
 }
 
+// `shutdown` from `active` is the exit path with no teardown of its own: it
+// runs on_shutdown ONLY -- not on_deactivate, not on_cleanup -- so only an
+// on_shutdown override can release what on_configure and on_activate created.
+// A finalized node that keeps its endpoints keeps a transient_local publisher
+// LATCHED, so a subscriber that joins minutes later still receives a value
+// from a node that no longer exists as far as the lifecycle is concerned.
+// (Endpoint counts are what a peer can observe; a peer created before the
+// shutdown, as in ChartDatumNodeStopsPublishingWhenFinalized, sees only the
+// fresh-publish half.)
+template<typename NodeT>
+void expect_shutdown_releases_endpoints(
+  rclcpp::executors::SingleThreadedExecutor & executor,
+  const std::shared_ptr<NodeT> & node,
+  const std::function<size_t()> & endpoints,
+  size_t when_active,
+  size_t after_shutdown)
+{
+  ASSERT_NO_THROW(node->configure());
+  ASSERT_NO_THROW(node->activate());
+  ASSERT_TRUE(
+    spin_until(
+      executor, [&] {return endpoints() == when_active;},
+      std::chrono::seconds(15)))
+    << "configure did not bring the endpoints up (saw " << endpoints()
+    << ", expected " << when_active << ")";
+
+  ASSERT_NO_THROW(node->shutdown());
+  ASSERT_EQ(node->get_current_state().id(), kFinalized);
+  EXPECT_TRUE(
+    spin_until(
+      executor, [&] {return endpoints() == after_shutdown;},
+      std::chrono::seconds(15)))
+    << "`shutdown` from `active` left " << endpoints() << " endpoint(s) up, "
+    << "expected " << after_shutdown
+    << " -- on_deactivate and on_cleanup are both skipped on that transition, "
+       "so nothing but on_shutdown can release them";
+}
+
 }  // namespace
 
 class LifecycleReconfigureTest : public ::testing::Test
@@ -608,6 +646,98 @@ TEST_F(LifecycleReconfigureTest, ChartDatumNodeStopsPublishingWhenFinalized)
     << " datum_source message(s) -- the publish timer survives `shutdown` from "
        "`active` (on_deactivate and on_cleanup are both skipped), so "
        "map -> chart_datum is still going out on /tf too";
+}
+
+// One case per node, because the defect is per-node: every one of them
+// allocates in on_configure and, before this, released on `cleanup` and on
+// nothing else. (#34)
+TEST_F(LifecycleReconfigureTest, ChartDatumNodeShutdownReleasesItsPublishers)
+{
+  auto node = std::make_shared<ChartDatumNode>(isolated_options());
+  auto peer = make_peer("chart_datum_shutdown_release_peer");
+
+  const auto latched = rclcpp::QoS(1).transient_local();
+  auto mllw_sub = peer->create_subscription<std_msgs::msg::Float64>(
+    "mllw_offset", latched, [](std_msgs::msg::Float64::SharedPtr) {});
+  auto mhhw_sub = peer->create_subscription<std_msgs::msg::Float64>(
+    "mhhw_offset", latched, [](std_msgs::msg::Float64::SharedPtr) {});
+  auto source_sub = peer->create_subscription<std_msgs::msg::String>(
+    "datum_source", latched, [](std_msgs::msg::String::SharedPtr) {});
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(peer);
+  executor.add_node(node->get_node_base_interface());
+
+  expect_shutdown_releases_endpoints(
+    executor, node,
+    [&] {
+      return mllw_sub->get_publisher_count() + mhhw_sub->get_publisher_count() +
+      source_sub->get_publisher_count();
+    },
+    3, 0);
+}
+
+TEST_F(LifecycleReconfigureTest, SeaSurfaceEstimatorShutdownReleasesItsEndpoints)
+{
+  auto node = std::make_shared<SeaSurfaceEstimator>(isolated_options());
+  auto peer = make_peer("sea_surface_shutdown_release_peer");
+
+  auto odom_pub = peer->create_publisher<nav_msgs::msg::Odometry>("odom", 10);
+  auto tide_sub = peer->create_subscription<std_msgs::msg::Float64>(
+    "tide_estimate", rclcpp::QoS(1).transient_local(),
+    [](std_msgs::msg::Float64::SharedPtr) {});
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(peer);
+  executor.add_node(node->get_node_base_interface());
+
+  expect_shutdown_releases_endpoints(
+    executor, node,
+    [&] {
+      return odom_pub->get_subscription_count() + tide_sub->get_publisher_count();
+    },
+    2, 0);
+}
+
+TEST_F(LifecycleReconfigureTest, TideCopierShutdownReleasesItsEndpoints)
+{
+  auto node = std::make_shared<TideCopier>(isolated_options());
+  auto peer = make_peer("tide_copier_shutdown_release_peer");
+
+  auto tf_pub = peer->create_publisher<tf2_msgs::msg::TFMessage>("tf", 10);
+  auto tf_sub = peer->create_subscription<tf2_msgs::msg::TFMessage>(
+    "tf", 10, [](tf2_msgs::msg::TFMessage::SharedPtr) {});
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(peer);
+  executor.add_node(node->get_node_base_interface());
+
+  // The peer's own subscription matches its publisher, so the node's makes two
+  // and the finalized node must take it back to one.
+  expect_shutdown_releases_endpoints(
+    executor, node, [&] {return tf_pub->get_subscription_count();}, 2, 1);
+}
+
+TEST_F(LifecycleReconfigureTest, NavSatFixToVelocityShutdownReleasesItsEndpoints)
+{
+  auto node = std::make_shared<NavSatFixToVelocity>(isolated_options());
+  auto peer = make_peer("nav_sat_fix_shutdown_release_peer");
+
+  auto fix_pub = peer->create_publisher<sensor_msgs::msg::NavSatFix>("fix", 10);
+  auto velocity_sub = peer->create_subscription<geometry_msgs::msg::TwistStamped>(
+    "velocity", 10, [](geometry_msgs::msg::TwistStamped::SharedPtr) {});
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(peer);
+  executor.add_node(node->get_node_base_interface());
+
+  expect_shutdown_releases_endpoints(
+    executor, node,
+    [&] {
+      return fix_pub->get_subscription_count() +
+      velocity_sub->get_publisher_count();
+    },
+    2, 0);
 }
 
 TEST_F(LifecycleReconfigureTest, NavSatFixToVelocityReconfigures)

@@ -45,18 +45,21 @@ public:
 
   CallbackReturn on_cleanup(const rclcpp_lifecycle::State &state) override
   {
-    // Everything on_configure created. The subscription goes first so no
-    // callback can be running against the publisher released below it -- and
-    // because a cleaned-up node that keeps a live /tf subscription is how this
-    // node went on copying map_tide after its lifecycle said it had stopped.
-    // Ordering alone only suffices under a single-threaded executor:
-    // shared_ptr::reset() provides no synchronization against a callback
-    // already dispatched. This node's main() uses one.
-    tf_subscription_.reset();
-    tf_publisher_.reset();
-
+    release_everything_on_configure_created();
     // Parameters stay declared on purpose: see on_configure.
     return LifecycleNode::on_cleanup(state);
+  }
+
+  // `shutdown` is legal from `unconfigured`, `inactive` AND `active`, and it
+  // runs on_shutdown ONLY -- on_deactivate and on_cleanup are both skipped.
+  // Without this override nothing released what on_configure created, so a
+  // FINALIZED node kept its endpoints up for the rest of the process's life.
+  // The release helper is null-safe and idempotent, so one override is correct
+  // from all three source states. (#34)
+  CallbackReturn on_shutdown(const rclcpp_lifecycle::State &state) override
+  {
+    release_everything_on_configure_created();
+    return LifecycleNode::on_shutdown(state);
   }
 
   void tf_callback(const tf2_msgs::msg::TFMessage::SharedPtr msg)
@@ -102,6 +105,20 @@ public:
   }
 
 private:
+  // Shared by on_cleanup and on_shutdown. Everything on_configure created. The
+  // subscription goes first so no callback can be running against the
+  // publisher released below it -- and because a node that keeps a live /tf
+  // subscription is how this one went on copying map_tide after its lifecycle
+  // said it had stopped. Ordering alone only suffices under a single-threaded
+  // executor: shared_ptr::reset() provides no synchronization against a
+  // callback already dispatched. This node's main() uses one. Every reset is
+  // null-safe and re-nulls, so the helper is idempotent.
+  void release_everything_on_configure_created()
+  {
+    tf_subscription_.reset();
+    tf_publisher_.reset();
+  }
+
   // Declare `name` only if it is not declared yet, then read the current value
   // into `value` -- on a re-configure that is the value the operator set.
   void declare_if_missing(const std::string & name, std::string & value)
