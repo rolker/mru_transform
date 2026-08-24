@@ -191,6 +191,16 @@ public:
           datum_entries_.size(), datum_config_path_.c_str());
       } catch (const std::exception & e) {
         RCLCPP_ERROR(get_logger(), "Failed to load datum config: %s", e.what());
+        // A failed configure returns the FSM to `unconfigured` WITHOUT calling
+        // on_cleanup, and `cleanup` is not a legal transition from there -- so
+        // nothing else will ever release what this configure already allocated.
+        // The supported recovery is to fix the config and configure again
+        // (ChartDatumNodeRecoversFromFailedConfigure), and that retry would
+        // overwrite the PROJ context and both pipelines, leaking them once per
+        // retry. Release them here, on the way out. (#34)
+        cleanup_proj();
+        vdatum_enabled_ = false;
+        datum_entries_.clear();
         return CallbackReturn::FAILURE;
       }
     }
