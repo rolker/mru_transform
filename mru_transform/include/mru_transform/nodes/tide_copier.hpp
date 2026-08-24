@@ -104,8 +104,27 @@ public:
     }
   }
 
+  // An exception out of on_configure or on_activate routes the FSM through
+  // `errorprocessing` to `unconfigured` WITHOUT running on_cleanup, and
+  // `cleanup` is not a legal transition from `unconfigured` -- so without this
+  // override nothing ever releases what the failed transition had already
+  // allocated. The supported recovery is another configure, which overwrites
+  // both pointers and strands the old endpoints: a /tf subscription still
+  // dispatching into a half-configured node. Same shape as the sibling nodes,
+  // same fix. (#34)
+  CallbackReturn on_error(const rclcpp_lifecycle::State &state) override
+  {
+    RCLCPP_ERROR(
+      get_logger(),
+      "Transition failed with an exception; releasing everything the failed "
+      "configure/activate had allocated. Correct the fault and configure again.");
+    release_everything_on_configure_created();
+    return LifecycleNode::on_error(state);
+  }
+
 private:
-  // Shared by on_cleanup and on_shutdown. Everything on_configure created. The
+  // Shared by on_cleanup, on_shutdown and on_error. Everything on_configure
+  // created. The
   // subscription goes first so no callback can be running against the
   // publisher released below it -- and because a node that keeps a live /tf
   // subscription is how this one went on copying map_tide after its lifecycle

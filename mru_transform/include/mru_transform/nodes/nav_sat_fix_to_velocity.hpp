@@ -77,8 +77,27 @@ public:
     return LifecycleNode::on_shutdown(state);
   }
 
+  // An exception out of on_configure or on_activate routes the FSM through
+  // `errorprocessing` to `unconfigured` WITHOUT running on_cleanup, and
+  // `cleanup` is not a legal transition from `unconfigured` -- so without this
+  // override nothing ever releases what the failed transition had already
+  // allocated. The supported recovery is another configure, which overwrites
+  // both pointers and strands the old endpoints: a `fix` subscription still
+  // dispatching into a half-configured node. Same shape as the sibling nodes,
+  // same fix. (#34)
+  CallbackReturn on_error(const rclcpp_lifecycle::State &state) override
+  {
+    RCLCPP_ERROR(
+      get_logger(),
+      "Transition failed with an exception; releasing everything the failed "
+      "configure/activate had allocated. Correct the fault and configure again.");
+    release_everything_on_configure_created();
+    return LifecycleNode::on_error(state);
+  }
+
 private:
-  // Shared by on_cleanup and on_shutdown: everything on_configure created,
+  // Shared by on_cleanup, on_shutdown and on_error: everything on_configure
+  // created,
   // subscription first so no callback can be running against the publisher
   // released below it (sufficient only under the single-threaded executor this
   // node's main() uses). Every reset is null-safe and re-nulls, so the helper

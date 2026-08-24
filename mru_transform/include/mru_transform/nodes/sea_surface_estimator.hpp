@@ -214,8 +214,32 @@ public:
     return LifecycleNode::on_shutdown(state);
   }
 
+  // An exception out of on_configure or on_activate routes the FSM through
+  // `errorprocessing` to `unconfigured`, and on_cleanup is NOT one of the
+  // callbacks that runs on that path -- so without this override nothing ever
+  // releases what the failed transition had already allocated, and `cleanup`
+  // is not a legal transition from `unconfigured` either. The supported
+  // recovery is another configure, and here that is a use-after-free rather
+  // than a leak: the retry's first act is
+  // `tf_buffer_ = std::make_shared<tf2_ros::Buffer>(...)`, which drops the last
+  // reference to the old Buffer and destroys it while the OLD tf_listener_ --
+  // not reassigned for another few lines -- is still alive and writing into it
+  // from its own thread through a raw tf2::BufferCore &. That is the exact
+  // ordering hazard release_everything_on_configure_created() above exists to
+  // order against; the error path had no ordering at all. (#34)
+  CallbackReturn on_error(const rclcpp_lifecycle::State &state) override
+  {
+    RCLCPP_ERROR(
+      get_logger(),
+      "Transition failed with an exception; releasing everything the failed "
+      "configure/activate had allocated. Correct the fault and configure again.");
+    release_everything_on_configure_created();
+    return LifecycleNode::on_error(state);
+  }
+
 private:
-  // Shared by on_cleanup and on_shutdown: everything on_configure created,
+  // Shared by on_cleanup, on_shutdown and on_error: everything on_configure
+  // created,
   // released in reverse. The subscription goes first so no callback can be
   // running against members torn down below it. That ordering is only
   // sufficient under a single-threaded executor -- shared_ptr::reset() itself

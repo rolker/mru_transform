@@ -298,7 +298,8 @@ public:
   }
 
 private:
-  // Shared by on_cleanup and on_error: every reset here is null-safe and
+  // Shared by on_cleanup, on_shutdown and on_error: every reset here is
+  // null-safe and
   // re-nulls what it releases, so it is idempotent and safe to run twice or on
   // a half-built node.
   void release_everything_on_configure_created()
