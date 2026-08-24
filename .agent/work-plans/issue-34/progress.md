@@ -385,19 +385,19 @@ can now also point at the two follow-ups filed from this round
 - Commit identity correct on all 24 commits; working tree clean.
 
 ### Findings
-- [ ] (must-fix) `shutdown` from `active` skips both `on_deactivate` and `on_cleanup` — only `on_shutdown` runs, and no node overrides it — so `publish_timer_`/`recalc_timer_` survive and a **FINALIZED** node keeps publishing. Proven with a throwaway case: state `4` (finalized) and **3 `datum_source` messages received after `shutdown()`**. `tf_broadcaster_` is a plain `tf2_ros::TransformBroadcaster` with no activation gate at all, so `map -> chart_datum` keeps going out on `/tf` from a finalized node — the same defect class this PR fixes in `tide_copier`, on the frame every sounding is reduced against. Round 1's "every publishing path is gated" clearance for this node rested on an incomplete transition enumeration. Fix: a `PRIMARY_STATE_ACTIVE` guard at the top of `publish_callback`, matching the package's other three nodes (it also covers the ERROR path in suggestion 8) — `mru_transform/include/mru_transform/nodes/chart_datum_node.hpp:531-570`
-- [ ] (must-fix) The new configure-failure modes are undocumented, against this README's own convention: the `sea_surface_estimator` table still gives only defaults, while `datum_config_path` (`:95`) documents "A malformed file fails `on_configure`" and `tide_range_margin` (`:172`) documents "Negative values are clamped to 0". Retuning the averaging window between lines is the workflow #34 exists to enable, and the operator will hit this. The row also needs the operational framing, because "the boat refuses to configure" is not what happens: `launch_ros`'s `LifecycleTransition` matches neither `inactive` nor `errorprocessing` on a `FAILURE`, so nothing chains, nothing logs "stopping transitions", `respawn` never fires — the process stays up in `unconfigured`, publishes no `map_tide`, and leaves one ERROR line. Say so, and point at `ros2 lifecycle get`. Note `plan.md:275-279` currently asserts the opposite ("README's parameter tables ... are unaffected") — `mru_transform/README.md:168-169`
-- [ ] (must-fix) The rationale for rejecting `maximum_buffer_duration == 0` is factually wrong, and the same wrong claim is repeated in the test. The prune is `begin()->first < now - max`; at `max == 0` the cutoff *equals* `now` and the just-inserted key is exactly `now`, so `now < now` is false and the sample is kept — only a strictly *negative* maximum empties the buffer. `(min=0, max=0)` was therefore a working "publish the instantaneous height, no smoothing" configuration and is now a hard configure FAILURE. Rejecting it is defensible policy (a zero-length window is not an averaging window, and this node exists to average) — but the comment must say that, instead of a mechanism that does not occur — `mru_transform/include/mru_transform/nodes/sea_surface_estimator.hpp:55-57`, `mru_transform/test/test_lifecycle_reconfigure.cpp:197-200`
-- [ ] (suggestion) The isolation comment overclaims for the collision that actually matters in this workspace: two concurrent runs of *this same test* (two agent worktrees running `colcon test` at once) share both the hardcoded `ROS_DOMAIN_ID=89` and the namespace, and `ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST` explicitly permits same-host peers — so `tf_pub->get_subscription_count() >= 2` can be satisfied by the other process and the negatives pass vacuously. Derive the domain per run, or scope the claim to unrelated traffic — `mru_transform/CMakeLists.txt:457-464`, `mru_transform/test/test_lifecycle_reconfigure.cpp:43-56`
-- [ ] (suggestion) `TransformListener(*tf_buffer_)` is the one-arg form, which creates its **own** internal node with default options — root namespace, no remap rules — so in `sea_surface_estimator` and `chart_datum_node` the TF listener subscribes to the global `/tf` and `/tf_static` regardless of the fixture's namespacing, and it runs its own spin thread. Nothing asserts on TF today so nothing flakes, but both the isolation comment's "every node it creates" and the new "every `main()` uses a single-threaded executor" comments are looser than stated — `mru_transform/include/mru_transform/nodes/sea_surface_estimator.hpp:144-152`, `mru_transform/include/mru_transform/nodes/chart_datum_node.hpp:255-260`
-- [ ] (suggestion) `ament_add_gtest` leaves `TIMEOUT` at 60 s while the file now budgets roughly eight 15 s discovery waits; I measured a two-case failure taking 30 s on its own. A regression can turn into an opaque ctest timeout instead of a named failure. Pass `TIMEOUT 180` — `mru_transform/CMakeLists.txt:435`
-- [ ] (suggestion) `ROS_LOCALHOST_ONLY=0` is the deprecated mechanism `ROS_AUTOMATIC_DISCOVERY_RANGE` replaced; setting it at all emits two rcl deprecation WARNs per run (observed). Drop it — `mru_transform/CMakeLists.txt:463`
-- [ ] (suggestion) No `on_error` on `chart_datum_node`: an exception out of `on_configure`/`on_activate` after `setup_proj()` succeeded routes `errorprocessing -> unconfigured` (the default `on_error` returns SUCCESS) without `on_cleanup`, leaking the PROJ context by the very argument the new catch-block comment makes. `on_activate` is worse — a throwing `create_wall_timer` leaks the context, both pipelines, and the TF/publisher members. A three-line `on_error` calling `cleanup_proj()` closes the residual of the class this round fixed — `mru_transform/include/mru_transform/nodes/chart_datum_node.hpp:186-206`
-- [ ] (suggestion) `ROS_DISCOVERY_SERVER`, `ROS_STATIC_PEERS` and `FASTRTPS_DEFAULT_PROFILES_FILE` / `CYCLONEDDS_URI` are inherited and can re-join the test to a wider graph regardless of the discovery range; empty overrides in the same ENVIRONMENT list are cheap. Worth a word that none of this applies when the gtest binary is run directly — a normal debugging step — `mru_transform/CMakeLists.txt:457-461`
-- [ ] (suggestion) The re-configure leg waits for subscription re-discovery but not for the re-created `velocity_publisher_` to match the peer's subscription; the single volatile-QoS velocity can be dropped, failing the assertion for a reason unrelated to the code under test. One more `spin_until` on `get_publisher_count()` before the publish — `mru_transform/test/test_lifecycle_reconfigure.cpp:486-497`
-- [ ] (suggestion) Plan drift — three statements the plan now contradicts, on exactly the points a reviewer checks: `:186` and `:269` assert the node headers are installed (reversed by `d6dd5d1`), `:272` says `nav_sat_fix_to_velocity`'s `on_deactivate` is deliberately not overridden (added in `77e7542`), and `:275-279` says the README is unaffected (see must-fix 2) — `.agent/work-plans/issue-34/plan.md`
-- [ ] (suggestion) A negative `minimum_buffer_duration` clamps the member but leaves `ros2 param get` reporting the negative value, so an operator diagnosing on the water sees a number the node is not using. Consistent with `tide_range_margin`, but the block now gives three different answers to a bad duration inside fifteen lines. Either `set_parameter()` the clamped value back or document the divergence in the README row — `mru_transform/include/mru_transform/nodes/sea_surface_estimator.hpp:68-74`
-- [ ] (suggestion) `${lifecycle_msgs_TARGETS}` is indented two spaces where every sibling in the same `target_link_libraries` block uses four; this repo has no linter to catch it (mru_transform#35) — `mru_transform/CMakeLists.txt:437`
+- [x] (must-fix) `shutdown` from `active` skips both `on_deactivate` and `on_cleanup` — only `on_shutdown` runs, and no node overrides it — so `publish_timer_`/`recalc_timer_` survive and a **FINALIZED** node keeps publishing. Proven with a throwaway case: state `4` (finalized) and **3 `datum_source` messages received after `shutdown()`**. `tf_broadcaster_` is a plain `tf2_ros::TransformBroadcaster` with no activation gate at all, so `map -> chart_datum` keeps going out on `/tf` from a finalized node — the same defect class this PR fixes in `tide_copier`, on the frame every sounding is reduced against. Round 1's "every publishing path is gated" clearance for this node rested on an incomplete transition enumeration. Fix: a `PRIMARY_STATE_ACTIVE` guard at the top of `publish_callback`, matching the package's other three nodes (it also covers the ERROR path in suggestion 8) — `mru_transform/include/mru_transform/nodes/chart_datum_node.hpp:531-570`
+- [x] (must-fix) The new configure-failure modes are undocumented, against this README's own convention: the `sea_surface_estimator` table still gives only defaults, while `datum_config_path` (`:95`) documents "A malformed file fails `on_configure`" and `tide_range_margin` (`:172`) documents "Negative values are clamped to 0". Retuning the averaging window between lines is the workflow #34 exists to enable, and the operator will hit this. The row also needs the operational framing, because "the boat refuses to configure" is not what happens: `launch_ros`'s `LifecycleTransition` matches neither `inactive` nor `errorprocessing` on a `FAILURE`, so nothing chains, nothing logs "stopping transitions", `respawn` never fires — the process stays up in `unconfigured`, publishes no `map_tide`, and leaves one ERROR line. Say so, and point at `ros2 lifecycle get`. Note `plan.md:275-279` currently asserts the opposite ("README's parameter tables ... are unaffected") — `mru_transform/README.md:168-169`
+- [x] (must-fix) The rationale for rejecting `maximum_buffer_duration == 0` is factually wrong, and the same wrong claim is repeated in the test. The prune is `begin()->first < now - max`; at `max == 0` the cutoff *equals* `now` and the just-inserted key is exactly `now`, so `now < now` is false and the sample is kept — only a strictly *negative* maximum empties the buffer. `(min=0, max=0)` was therefore a working "publish the instantaneous height, no smoothing" configuration and is now a hard configure FAILURE. Rejecting it is defensible policy (a zero-length window is not an averaging window, and this node exists to average) — but the comment must say that, instead of a mechanism that does not occur — `mru_transform/include/mru_transform/nodes/sea_surface_estimator.hpp:55-57`, `mru_transform/test/test_lifecycle_reconfigure.cpp:197-200`
+- [x] (suggestion) The isolation comment overclaims for the collision that actually matters in this workspace: two concurrent runs of *this same test* (two agent worktrees running `colcon test` at once) share both the hardcoded `ROS_DOMAIN_ID=89` and the namespace, and `ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST` explicitly permits same-host peers — so `tf_pub->get_subscription_count() >= 2` can be satisfied by the other process and the negatives pass vacuously. Derive the domain per run, or scope the claim to unrelated traffic — `mru_transform/CMakeLists.txt:457-464`, `mru_transform/test/test_lifecycle_reconfigure.cpp:43-56`
+- [x] (suggestion) `TransformListener(*tf_buffer_)` is the one-arg form, which creates its **own** internal node with default options — root namespace, no remap rules — so in `sea_surface_estimator` and `chart_datum_node` the TF listener subscribes to the global `/tf` and `/tf_static` regardless of the fixture's namespacing, and it runs its own spin thread. Nothing asserts on TF today so nothing flakes, but both the isolation comment's "every node it creates" and the new "every `main()` uses a single-threaded executor" comments are looser than stated — `mru_transform/include/mru_transform/nodes/sea_surface_estimator.hpp:144-152`, `mru_transform/include/mru_transform/nodes/chart_datum_node.hpp:255-260`
+- [x] (suggestion) `ament_add_gtest` leaves `TIMEOUT` at 60 s while the file now budgets roughly eight 15 s discovery waits; I measured a two-case failure taking 30 s on its own. A regression can turn into an opaque ctest timeout instead of a named failure. Pass `TIMEOUT 180` — `mru_transform/CMakeLists.txt:435`
+- [x] (suggestion) `ROS_LOCALHOST_ONLY=0` is the deprecated mechanism `ROS_AUTOMATIC_DISCOVERY_RANGE` replaced; setting it at all emits two rcl deprecation WARNs per run (observed). Drop it — `mru_transform/CMakeLists.txt:463`
+- [x] (suggestion) No `on_error` on `chart_datum_node`: an exception out of `on_configure`/`on_activate` after `setup_proj()` succeeded routes `errorprocessing -> unconfigured` (the default `on_error` returns SUCCESS) without `on_cleanup`, leaking the PROJ context by the very argument the new catch-block comment makes. `on_activate` is worse — a throwing `create_wall_timer` leaks the context, both pipelines, and the TF/publisher members. A three-line `on_error` calling `cleanup_proj()` closes the residual of the class this round fixed — `mru_transform/include/mru_transform/nodes/chart_datum_node.hpp:186-206`
+- [x] (suggestion) `ROS_DISCOVERY_SERVER`, `ROS_STATIC_PEERS` and `FASTRTPS_DEFAULT_PROFILES_FILE` / `CYCLONEDDS_URI` are inherited and can re-join the test to a wider graph regardless of the discovery range; empty overrides in the same ENVIRONMENT list are cheap. Worth a word that none of this applies when the gtest binary is run directly — a normal debugging step — `mru_transform/CMakeLists.txt:457-461`
+- [x] (suggestion) The re-configure leg waits for subscription re-discovery but not for the re-created `velocity_publisher_` to match the peer's subscription; the single volatile-QoS velocity can be dropped, failing the assertion for a reason unrelated to the code under test. One more `spin_until` on `get_publisher_count()` before the publish — `mru_transform/test/test_lifecycle_reconfigure.cpp:486-497`
+- [x] (suggestion) Plan drift — three statements the plan now contradicts, on exactly the points a reviewer checks: `:186` and `:269` assert the node headers are installed (reversed by `d6dd5d1`), `:272` says `nav_sat_fix_to_velocity`'s `on_deactivate` is deliberately not overridden (added in `77e7542`), and `:275-279` says the README is unaffected (see must-fix 2) — `.agent/work-plans/issue-34/plan.md`
+- [x] (suggestion) A negative `minimum_buffer_duration` clamps the member but leaves `ros2 param get` reporting the negative value, so an operator diagnosing on the water sees a number the node is not using. Consistent with `tide_range_margin`, but the block now gives three different answers to a bad duration inside fifteen lines. Either `set_parameter()` the clamped value back or document the divergence in the README row — `mru_transform/include/mru_transform/nodes/sea_surface_estimator.hpp:68-74`
+- [x] (suggestion) `${lifecycle_msgs_TARGETS}` is indented two spaces where every sibling in the same `target_link_libraries` block uses four; this repo has no linter to catch it (mru_transform#35) — `mru_transform/CMakeLists.txt:437`
 
 ### Specialists
 - Static analysis: **not available** — no CI, no pre-commit, and `ament_lint_auto_find_test_dependencies()` finds no registered linters (mru_transform#35). The clean build and full test run above are the only gate, and both were run here rather than quoted.
@@ -409,3 +409,160 @@ can now also point at the two follow-ups filed from this round
 
 ### Actions
 - [ ] Not pushed, no PR opened — the operator gates both.
+
+## Implementation
+**Status**: complete
+**When**: 2026-08-24 09:10 -04:00
+**By**: Claude Code Agent (Claude Opus)
+
+**Branch**: feature/issue-34 at `306108a`
+**Addressed**: `## Local Review (Pre-Push)` (2026-08-24 00:41 -04:00, branch at `9d151d7`) — 3 must-fix + 10 suggestions
+**Commits**: `02cbcde`, `09ce07a`, `e7d6b22`, `822d149`, `11ae6f3`, `306108a`
+
+### Decisions worth recording
+
+- **Must-fix 1 — the guard, and the enumeration re-done for all four nodes.**
+  `publish_callback` now returns unless the node is `PRIMARY_STATE_ACTIVE`,
+  matching the other three. The review's diagnosis is confirmed against source:
+  `shutdown` from `active` runs `on_shutdown` only, no node overrides it, so
+  both timers survive into `finalized`; `tf_broadcaster_` is a plain
+  `tf2_ros::TransformBroadcaster` with no activation gate at all. The single
+  check covers the TF branches and the `datum_source` publish together, and
+  also covers `errorprocessing`, which is not ACTIVE either.
+
+  **The enumeration was re-run for all four nodes rather than trusting round
+  1's clearance.** Every publish site in the package was re-listed from source
+  (`grep` for `create_wall_timer` / `->publish(` / `sendTransform`), and each
+  traced to its entry point:
+  - `chart_datum_node` — the only node with timers. Both are created in
+    `on_activate`; `publish_callback` was the sole ungated publish path. Fixed.
+  - `tide_copier` (`tf_callback`), `sea_surface_estimator`
+    (`odometry_callback`), `nav_sat_fix_to_velocity` (`navsat_callback`) —
+    every publish in each is reached only from that one subscription callback,
+    and each callback checks `PRIMARY_STATE_ACTIVE` at its top. Their
+    subscriptions do survive `shutdown`-from-`active` exactly as
+    `chart_datum_node`'s timers did, so messages keep *arriving* at a finalized
+    node — but the gate is inside the callback, so nothing goes out. The
+    incomplete-enumeration failure mode was specific to the timer node.
+  - `sea_surface_estimator` publishes twice (`tide_estimate`, then the TF)
+    deep inside `odometry_callback`; both are downstream of the same gate.
+
+- **Must-fix 1's test is a real regression test, not a throwaway.**
+  `ChartDatumNodeStopsPublishingWhenFinalized`: configure → activate at 20 Hz,
+  wait for `datum_source` traffic, `shutdown()`, assert state `4`, drain 300 ms,
+  then assert an empty 700 ms (fourteen publish periods) window. Mutation-checked
+  by deleting the guard and rebuilding: it fails with **14 datum_source messages
+  published by a FINALIZED node**. `datum_source` is the observable half because
+  it is the one branch that does not need a resolved datum — the TF branches
+  need an `earth → base_link` lookup this in-process fixture cannot supply, and
+  the listener is not namespaceable (see the suggestion-2 note). Both sit behind
+  the same single check, and the test comment says so.
+
+- **Must-fix 3 — the mechanism claim was wrong, the policy stands.** Verified
+  in source: the prune erases while `begin()->first < now - maximum`, so at
+  `maximum == 0` the cutoff equals `now`, the just-inserted key is exactly
+  `now`, `now < now` is false, and the sample is **kept**. Only a strictly
+  negative maximum empties the buffer. `(0, 0)` was a working "no smoothing"
+  setting. The comment, the log message, the test comment and the README now
+  separate the two rejections: negative maximum = correctness bug (the UB
+  deref); `minimum >= maximum` including `(0, 0)` = **policy**, because an
+  unsmoothed single-sample tide on the path feeding every sounding is not a
+  configuration anyone should be running.
+
+  Two consequential details. The check was rewritten from `!(max > 0.0)` to
+  `!(max >= 0.0)` — deliberately a negated `>=` so a **NaN maximum still
+  fails it**, which the old form also did; `(0, 0)` is now caught one line
+  later by the `minimum >= maximum` branch instead, so no input that used to be
+  rejected has become acceptable. And the `(0, 0)` boundary is pinned by a new
+  case inside `SeaSurfaceEstimatorRejectsUnusableBufferDurations`, mutation-
+  checked by relaxing `>=` to `>` (it fails, reporting state 2). It is pinned
+  *because* it is a policy call: if the policy is ever revisited, that case has
+  to be revisited with it.
+
+- **Must-fix 2 — the README says the failure is quiet.** The
+  `sea_surface_estimator` parameter rows now document the configure failures the
+  way `datum_config_path` and `tide_range_margin` are documented, plus a
+  "Buffer durations that fail `on_configure`" section. It states plainly that a
+  configure FAILURE is **not an interlock**: `launch_ros`'s
+  `LifecycleTransition` matches neither `inactive` nor `errorprocessing`, so
+  nothing chains, nothing announces that transitions stopped, `respawn` never
+  fires, and the process sits up in `unconfigured` publishing no tide behind one
+  ERROR line — check `ros2 lifecycle get`. `chart_datum_node`'s
+  `publish_rate` / `recalc_interval` rows (pre-existing validation, verified
+  against `jazzy`) gained the same one-line note and are named in that section.
+
+- **All ten suggestions taken; none deferred, none filed onward.** Each was
+  cheap and self-contained. Two were taken as the *comment-correcting* half of
+  the choice the review offered rather than the mechanism-changing half:
+  suggestion 1 scopes the isolation claim instead of deriving a per-run domain
+  (a per-run domain needs a wrapper the ctest ENVIRONMENT property cannot
+  express), and suggestion 2 names what the one-argument `TransformListener`
+  does instead of switching to the node-attached form, which would change how
+  the buffer is filled. Suggestion 5's `on_error` was taken in the fuller form:
+  the `on_cleanup` teardown is factored into
+  `release_everything_on_configure_created()` and run from both, so a throwing
+  `on_activate` no longer strands the TF members and the three publishers
+  alongside the PROJ context.
+
+### Actions
+- [x] (must-fix) A FINALIZED `chart_datum_node` keeps publishing — timers survive `shutdown` from `active` — `chart_datum_node.hpp:531-570` — `02cbcde` (guard + `ChartDatumNodeStopsPublishingWhenFinalized`, mutation-checked; enumeration re-run on all four nodes)
+- [x] (must-fix) New configure failures undocumented; a configure FAILURE is a quiet failure, not an interlock — `README.md` — `e7d6b22`
+- [x] (must-fix) The `maximum_buffer_duration == 0` rationale is factually wrong; state the policy instead — `sea_surface_estimator.hpp:55-57`, `test_lifecycle_reconfigure.cpp:197-200` — `09ce07a`
+- [x] (suggestion) Isolation comment overclaims for two concurrent runs of this same test — `CMakeLists.txt:457-464`, `test_lifecycle_reconfigure.cpp:43-56` — `822d149` (scoped the claim; also says it does not apply when the gtest binary is run directly)
+- [x] (suggestion) One-argument `TransformListener` makes its own root-namespace node and thread — `sea_surface_estimator.hpp:144-152`, `chart_datum_node.hpp:255-260` — `822d149` (named at both construction sites and in the two `on_cleanup` "single-threaded executor" comments)
+- [x] (suggestion) `TIMEOUT` left at 60 s while the file budgets eight 15 s waits — `CMakeLists.txt:435` — `822d149` (`TIMEOUT 180`; confirmed in the generated `CTestTestfile.cmake`)
+- [x] (suggestion) `ROS_LOCALHOST_ONLY=0` is deprecated and emits two WARNs per run — `CMakeLists.txt:463` — `822d149` (dropped; deprecation warnings in the test log now number 0)
+- [x] (suggestion) No `on_error` on `chart_datum_node`; the error path leaks the PROJ context — `chart_datum_node.hpp:186-206` — `11ae6f3`
+- [x] (suggestion) Inherited `ROS_DISCOVERY_SERVER` / `ROS_STATIC_PEERS` / DDS profile vars can re-join a wider graph — `CMakeLists.txt:457-461` — `822d149` (blanked in the same ENVIRONMENT list)
+- [x] (suggestion) Re-configure leg does not wait for the re-created `velocity_publisher_` to match — `test_lifecycle_reconfigure.cpp:486-497` — `822d149`
+- [x] (suggestion) Plan drift on three points — `.agent/work-plans/issue-34/plan.md` — `306108a` (marked revised-during-implementation with the commit that reversed each, rather than rewritten)
+- [x] (suggestion) A clamped negative `minimum_buffer_duration` still reports the negative value to `ros2 param get` — `sea_surface_estimator.hpp:68-74` — `e7d6b22` (documented the divergence in the README row; kept consistent with `tide_range_margin` rather than adding a third behaviour)
+- [x] (suggestion) `${lifecycle_msgs_TARGETS}` indented two spaces — `CMakeLists.txt:437` — `822d149`
+
+### Verification (run, not quoted)
+
+This repo has no CI, no pre-commit config and no registered linters
+(mru_transform#35), so this local run is the only gate. It was run fresh after
+the last commit, not carried over from the fix rounds.
+
+- **Clean rebuild** — `platforms_ws/build/mru_transform` and
+  `platforms_ws/install/mru_transform` removed first, then rebuilt: **0 errors**.
+  Warnings are the pre-existing unused-parameter in untouched
+  `src/mru_transform.cpp` and vendored `geodesy/geodesics.h`; none in any
+  changed file.
+- `./platforms_ws/test.sh mru_transform` — **86 tests, 0 errors, 0 failures,
+  0 skipped** (85 before this round; +1 = `ChartDatumNodeStopsPublishingWhenFinalized`.
+  The `(0, 0)` policy case is a third block inside the existing
+  `SeaSurfaceEstimatorRejectsUnusableBufferDurations`, so it adds no case count).
+  Suite runs in ~10 s, far inside the new 180 s ctest timeout.
+- **Both new checks mutation-verified, and the tree verified clean afterwards**:
+  - removing the `PRIMARY_STATE_ACTIVE` guard from `publish_callback` →
+    `ChartDatumNodeStopsPublishingWhenFinalized` fails, "a FINALIZED node
+    published 14 datum_source message(s)"; restored, suite green.
+  - relaxing `minimum >= maximum` to `minimum > maximum` → the `(0, 0)` block
+    fails ("(0, 0) was accepted"), alongside the `(30, 30)` block; restored,
+    suite green.
+- **Generated `CTestTestfile.cmake` inspected**: `TIMEOUT "180"` and the six-var
+  `ENVIRONMENT` list are both present, sitting alongside ament's `LABELS`,
+  `REQUIRED_FILES` and `WORKING_DIRECTORY` — nothing clobbered.
+- **Deprecation noise gone**: `ROS_LOCALHOST_ONLY is deprecated` appears **0**
+  times in the test log (two per run before).
+- **Header install still excludes `nodes/`** after the clean rebuild: the
+  installed `include/mru_transform/mru_transform/` carries the 12 pre-existing
+  headers and no `nodes/` directory.
+- The PROJ leak and the new `on_error` path have no test, for the reason round 2
+  accepted: `setup_proj()` allocates only with a real VDatum grid tree present,
+  which no in-process test can supply. Reviewed by reading instead — every reset
+  in `release_everything_on_configure_created()` is null-safe and re-nulls, so
+  running it from both `on_cleanup` and `on_error` is idempotent, and
+  `cleanup_proj()` was already verified null-guarded in round 2.
+
+### Not pushed
+The host performs pushes; no PR opened. The PR body should still carry the
+lifecycle-publisher fix and the `tide_copier` build target as scope beyond the
+issue's text, the two follow-ups filed in round 1
+([#37](https://github.com/rolker/mru_transform/issues/37),
+[#38](https://github.com/rolker/mru_transform/issues/38)), and — new this round
+— the fact that `(min=0, max=0)` was a working configuration that this branch
+deliberately refuses, which is an operator-visible policy change rather than a
+bug fix.
