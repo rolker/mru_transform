@@ -125,7 +125,7 @@ private:
     // The check is load-bearing for something the publisher's gate cannot do:
     // it returns BEFORE last_navsatfix_ is updated, so a fix arriving while the
     // node is muted never becomes the reference for a later difference --
-    // pinned by NavSatFixToVelocityIgnoresFixesWhileInactive, which fails if
+    // pinned by NavSatFixToVelocityRespectsLifecycleState, which fails if
     // this check alone is deleted. The gap itself is made safe by
     // on_deactivate/on_cleanup/on_shutdown clearing last_navsatfix_, not by the
     // maximum_interval_ check, which a sub-2 s cycle would pass.
