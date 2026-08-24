@@ -37,6 +37,38 @@ constexpr std::uint8_t kUnconfigured =
 constexpr std::uint8_t kInactive =
   lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE;
 
+// Isolation. The live pub/sub cases below prove NEGATIVES -- "an inactive node
+// published nothing" -- which any unrelated traffic on the machine can break,
+// and `get_subscription_count()` waits, which an external subscriber can
+// satisfy vacuously. Two layers keep that from happening:
+//   * a dedicated ROS_DOMAIN_ID and localhost-only discovery, set on the test
+//     in CMakeLists.txt, so nothing outside this process is even discovered;
+//   * every node -- including the peer -- in this namespace, with the absolute
+//     /tf that tide_copier hardcodes remapped into it, so a domain collision
+//     still cannot cross-talk.
+// Topic names in this file are therefore RELATIVE on purpose; an absolute
+// "/tf" or "/fix" here would defeat both layers.
+constexpr char kTestNamespace[] = "/mru_transform_lifecycle_test";
+
+rclcpp::NodeOptions isolated_options()
+{
+  rclcpp::NodeOptions options;
+  options.arguments(
+    {
+      "--ros-args",
+      "-r", std::string("__ns:=") + kTestNamespace,
+      "-r", std::string("/tf:=") + kTestNamespace + "/tf",
+    });
+  return options;
+}
+
+// A plain peer node in the same namespace, so its relative topic names resolve
+// to the same place as the node under test's.
+std::shared_ptr<rclcpp::Node> make_peer(const std::string & name)
+{
+  return std::make_shared<rclcpp::Node>(name, kTestNamespace);
+}
+
 // configure -> cleanup -> configure. The second configure is the one that
 // breaks. NOTE: rclcpp_lifecycle CATCHES an exception thrown by a transition
 // callback, logs "Caught exception in callback for transition 10" and reports
@@ -121,12 +153,12 @@ protected:
 
 TEST_F(LifecycleReconfigureTest, SeaSurfaceEstimatorReconfigures)
 {
-  expect_reconfigure_cycle(std::make_shared<SeaSurfaceEstimator>());
+  expect_reconfigure_cycle(std::make_shared<SeaSurfaceEstimator>(isolated_options()));
 }
 
 TEST_F(LifecycleReconfigureTest, SeaSurfaceEstimatorKeepsOperatorParameter)
 {
-  auto node = std::make_shared<SeaSurfaceEstimator>();
+  auto node = std::make_shared<SeaSurfaceEstimator>(isolated_options());
 
   ASSERT_EQ(node->get_current_state().id(), kUnconfigured);
   EXPECT_FALSE(node->has_parameter("sea_surface_frame"))
@@ -161,12 +193,12 @@ TEST_F(LifecycleReconfigureTest, SeaSurfaceEstimatorKeepsOperatorParameter)
 
 TEST_F(LifecycleReconfigureTest, ChartDatumNodeReconfigures)
 {
-  expect_reconfigure_cycle(std::make_shared<ChartDatumNode>());
+  expect_reconfigure_cycle(std::make_shared<ChartDatumNode>(isolated_options()));
 }
 
 TEST_F(LifecycleReconfigureTest, ChartDatumNodeKeepsOperatorParameter)
 {
-  auto node = std::make_shared<ChartDatumNode>();
+  auto node = std::make_shared<ChartDatumNode>(isolated_options());
 
   ASSERT_NO_THROW(node->configure());
   node->set_parameter(
@@ -187,7 +219,7 @@ TEST_F(LifecycleReconfigureTest, ChartDatumNodeKeepsOperatorParameter)
 // default instead, this would succeed.
 TEST_F(LifecycleReconfigureTest, ChartDatumNodeReconfigureUsesTheNewValue)
 {
-  auto node = std::make_shared<ChartDatumNode>();
+  auto node = std::make_shared<ChartDatumNode>(isolated_options());
 
   ASSERT_NO_THROW(node->configure());
   ASSERT_EQ(node->get_current_state().id(), kInactive);
@@ -207,7 +239,7 @@ TEST_F(LifecycleReconfigureTest, ChartDatumNodeReconfigureUsesTheNewValue)
 // the fix the retry threw on the already-declared chart_datum_frame.
 TEST_F(LifecycleReconfigureTest, ChartDatumNodeRecoversFromFailedConfigure)
 {
-  rclcpp::NodeOptions options;
+  rclcpp::NodeOptions options = isolated_options();
   options.parameter_overrides({rclcpp::Parameter("publish_rate", 0.0)});
   auto node = std::make_shared<ChartDatumNode>(options);
 
@@ -229,12 +261,12 @@ TEST_F(LifecycleReconfigureTest, ChartDatumNodeRecoversFromFailedConfigure)
 
 TEST_F(LifecycleReconfigureTest, NavSatFixToVelocityReconfigures)
 {
-  expect_reconfigure_cycle(std::make_shared<NavSatFixToVelocity>());
+  expect_reconfigure_cycle(std::make_shared<NavSatFixToVelocity>(isolated_options()));
 }
 
 TEST_F(LifecycleReconfigureTest, NavSatFixToVelocityKeepsOperatorParameter)
 {
-  auto node = std::make_shared<NavSatFixToVelocity>();
+  auto node = std::make_shared<NavSatFixToVelocity>(isolated_options());
 
   ASSERT_NO_THROW(node->configure());
   node->set_parameter(rclcpp::Parameter("map_frame", std::string("survey/map")));
@@ -259,13 +291,13 @@ TEST_F(LifecycleReconfigureTest, NavSatFixToVelocityKeepsOperatorParameter)
 //     gap. on_cleanup clears last_navsatfix_.
 TEST_F(LifecycleReconfigureTest, NavSatFixToVelocityRespectsLifecycleState)
 {
-  auto node = std::make_shared<NavSatFixToVelocity>();
-  auto peer = std::make_shared<rclcpp::Node>("nav_sat_fix_to_velocity_peer");
+  auto node = std::make_shared<NavSatFixToVelocity>(isolated_options());
+  auto peer = make_peer("nav_sat_fix_to_velocity_peer");
 
-  auto fix_pub = peer->create_publisher<sensor_msgs::msg::NavSatFix>("/fix", 10);
+  auto fix_pub = peer->create_publisher<sensor_msgs::msg::NavSatFix>("fix", 10);
   std::vector<geometry_msgs::msg::TwistStamped> velocities;
   auto velocity_sub = peer->create_subscription<geometry_msgs::msg::TwistStamped>(
-    "/velocity", 10,
+    "velocity", 10,
     [&velocities](geometry_msgs::msg::TwistStamped::SharedPtr msg) {
       velocities.push_back(*msg);
     });
@@ -279,7 +311,7 @@ TEST_F(LifecycleReconfigureTest, NavSatFixToVelocityRespectsLifecycleState)
     spin_until(
       executor, [&] {return fix_pub->get_subscription_count() > 0;},
       std::chrono::seconds(15)))
-    << "the node never subscribed to /fix";
+    << "the node never subscribed to fix";
 
   // Configured but NOT active: two fixes a valid interval apart must produce
   // nothing at all.
@@ -316,7 +348,7 @@ TEST_F(LifecycleReconfigureTest, NavSatFixToVelocityRespectsLifecycleState)
     spin_until(
       executor, [&] {return fix_pub->get_subscription_count() > 0;},
       std::chrono::seconds(15)))
-    << "the node never re-subscribed to /fix";
+    << "the node never re-subscribed to fix";
 
   fix_pub->publish(make_fix(102.0, 43.14));
   spin_for(executor, std::chrono::milliseconds(500));
@@ -336,12 +368,12 @@ TEST_F(LifecycleReconfigureTest, NavSatFixToVelocityRespectsLifecycleState)
 
 TEST_F(LifecycleReconfigureTest, TideCopierReconfigures)
 {
-  expect_reconfigure_cycle(std::make_shared<TideCopier>());
+  expect_reconfigure_cycle(std::make_shared<TideCopier>(isolated_options()));
 }
 
 TEST_F(LifecycleReconfigureTest, TideCopierKeepsOperatorParameter)
 {
-  auto node = std::make_shared<TideCopier>();
+  auto node = std::make_shared<TideCopier>(isolated_options());
 
   ASSERT_NO_THROW(node->configure());
   node->set_parameter(
@@ -367,13 +399,13 @@ TEST_F(LifecycleReconfigureTest, TideCopierKeepsOperatorParameter)
 // the cleanup -> configure cycle.
 TEST_F(LifecycleReconfigureTest, TideCopierRespectsLifecycleState)
 {
-  auto node = std::make_shared<TideCopier>();
-  auto peer = std::make_shared<rclcpp::Node>("tide_copier_peer");
+  auto node = std::make_shared<TideCopier>(isolated_options());
+  auto peer = make_peer("tide_copier_peer");
 
-  auto tf_pub = peer->create_publisher<tf2_msgs::msg::TFMessage>("/tf", 10);
+  auto tf_pub = peer->create_publisher<tf2_msgs::msg::TFMessage>("tf", 10);
   std::vector<geometry_msgs::msg::TransformStamped> copies;
   auto tf_sub = peer->create_subscription<tf2_msgs::msg::TFMessage>(
-    "/tf", 10,
+    "tf", 10,
     [&copies](tf2_msgs::msg::TFMessage::SharedPtr msg) {
       for (const auto & transform : msg->transforms) {
         // Ignore the input this test publishes; keep only the node's copies.
@@ -393,7 +425,7 @@ TEST_F(LifecycleReconfigureTest, TideCopierRespectsLifecycleState)
     spin_until(
       executor, [&] {return tf_pub->get_subscription_count() >= 2;},
       std::chrono::seconds(15)))
-    << "the node never subscribed to /tf";
+    << "the node never subscribed to tf";
 
   tf_pub->publish(make_tide_tf("in/map", "in/map_tide", 1.5));
   spin_for(executor, std::chrono::milliseconds(400));
@@ -434,7 +466,7 @@ TEST_F(LifecycleReconfigureTest, TideCopierRespectsLifecycleState)
     spin_until(
       executor, [&] {return tf_pub->get_subscription_count() >= 2;},
       std::chrono::seconds(15)))
-    << "the node never re-subscribed to /tf";
+    << "the node never re-subscribed to tf";
 
   tf_pub->publish(make_tide_tf("in/map", "in/map_tide", 1.8));
   ASSERT_TRUE(

@@ -441,6 +441,14 @@ if(BUILD_TESTING)
   target_include_directories(test_lifecycle_reconfigure PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
   )
+  # The live pub/sub cases in this test prove negatives ("an inactive node
+  # published nothing"), so unrelated ROS traffic on the machine could break
+  # them -- or satisfy a subscription-count wait vacuously. Give the test its
+  # own domain and keep discovery on this host. (The test also namespaces every
+  # node it creates, so a domain collision still cannot cross-talk.)
+  set_tests_properties(test_lifecycle_reconfigure PROPERTIES
+    ENVIRONMENT "ROS_DOMAIN_ID=89;ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST;ROS_LOCALHOST_ONLY=0"
+  )
 
   # unh_echoboats_project11#339: strict priority-preference nav-source
   # arbitration (highest-priority fresh source wins, not the newest sample).
