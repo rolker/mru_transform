@@ -95,8 +95,8 @@ The active source is logged on change and published on the latched
 | `datum_config_path` | `""` | Path to a polygon→datum YAML (see `config/datum_polygons.example.yaml`). Empty = none. A malformed file fails `on_configure`. |
 | `lake_datum` | NaN (unset) | Fixed `chart_datum` height (m, rel. ellipsoid) that overrides VDatum/config everywhere. For quick one-offs/testing. |
 | `lake_datum_mhhw` | NaN (unset) | Optional fixed MHHW height to accompany `lake_datum`. |
-| `recalc_interval` | `60.0` | Seconds between position-based datum recomputes. Must be > 0; `on_configure` fails otherwise. |
-| `publish_rate` | `1.0` | Hz at which cached transforms are republished. Must be > 0; `on_configure` fails otherwise. |
+| `recalc_interval` | `60.0` | Seconds between position-based datum recomputes. Must be finite and > 0; `on_configure` fails otherwise. |
+| `publish_rate` | `1.0` | Hz at which cached transforms are republished. Must be finite and > 0; `on_configure` fails otherwise. An infinite rate would arm a zero-period timer. |
 
 ### Config file
 

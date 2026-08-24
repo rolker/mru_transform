@@ -129,15 +129,23 @@ public:
     get_parameter("recalc_interval", recalc_interval_);
 
     // Non-positive timer periods would divide by zero (never publish) or peg a
-    // core (zero-period recalc) — both silent failures.
-    if (publish_rate_ <= 0.0) {
+    // core (zero-period recalc) — both silent failures. Non-finite ones reach
+    // the same places by a different route and a bare `<= 0.0` does not stop
+    // them: `+inf <= 0.0` is false, so publish_rate = .inf passed and
+    // create_wall_timer(1.0 / inf) armed a ZERO-PERIOD timer — the core-pegging
+    // failure this check exists to prevent — while a NaN passed into an
+    // out-of-range float-to-integral conversion inside the duration cast, which
+    // is undefined behaviour. Check finiteness explicitly.
+    if (!std::isfinite(publish_rate_) || publish_rate_ <= 0.0) {
       RCLCPP_ERROR(
-        get_logger(), "publish_rate must be > 0 (got %.3f)", publish_rate_);
+        get_logger(), "publish_rate must be a finite number > 0 (got %f)",
+        publish_rate_);
       return CallbackReturn::FAILURE;
     }
-    if (recalc_interval_ <= 0.0) {
+    if (!std::isfinite(recalc_interval_) || recalc_interval_ <= 0.0) {
       RCLCPP_ERROR(
-        get_logger(), "recalc_interval must be > 0 (got %.3f)", recalc_interval_);
+        get_logger(), "recalc_interval must be a finite number > 0 (got %f)",
+        recalc_interval_);
       return CallbackReturn::FAILURE;
     }
 

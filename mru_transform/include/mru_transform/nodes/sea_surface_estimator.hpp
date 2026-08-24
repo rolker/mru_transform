@@ -245,8 +245,11 @@ private:
   // sufficient under a single-threaded executor -- shared_ptr::reset() itself
   // synchronizes nothing, so with a multi-threaded executor a callback already
   // dispatched could still be running here. Every main() in this package uses
-  // a single-threaded executor; the installed headers now take NodeOptions, so
-  // a composed future user has to keep to that or add real synchronization.
+  // a single-threaded executor. These node headers are NOT installed (the
+  // `nodes/` directory is excluded from the install; they are a source-tree
+  // test seam), but they do take NodeOptions, so anyone who composes one of
+  // these classes has to keep to a single-threaded executor or add real
+  // synchronization.
   // (The one-argument TransformListener does spin a thread of its own
   // regardless of the executor, so "single-threaded" is a claim about this
   // node's own callbacks; that thread only fills the buffer, and the reset

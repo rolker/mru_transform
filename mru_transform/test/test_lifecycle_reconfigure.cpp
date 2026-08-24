@@ -508,6 +508,44 @@ TEST_F(LifecycleReconfigureTest, ChartDatumNodeRecoversFromFailedConfigure)
   EXPECT_EQ(node->get_current_state().id(), kInactive);
 }
 
+// Same defect shape as the buffer durations, on the other node's numbers: a
+// bare `<= 0.0` does not reject a non-finite value. publish_rate = .inf passed
+// it and create_wall_timer(1.0 / inf) armed a ZERO-PERIOD timer -- the
+// core-pegging failure the check exists to prevent -- and a NaN passed into an
+// out-of-range float-to-integral conversion in the duration cast. (#34)
+TEST_F(LifecycleReconfigureTest, ChartDatumNodeRejectsNonFiniteTimerPeriods)
+{
+  {
+    auto options = isolated_options();
+    options.parameter_overrides(
+      {
+        rclcpp::Parameter(
+          "publish_rate", std::numeric_limits<double>::infinity()),
+      });
+    auto node = std::make_shared<ChartDatumNode>(options);
+
+    ASSERT_NO_THROW(node->configure());
+    EXPECT_EQ(node->get_current_state().id(), kUnconfigured)
+      << "an infinite publish_rate was accepted; on_activate would arm a "
+         "zero-period timer";
+  }
+
+  {
+    auto options = isolated_options();
+    options.parameter_overrides(
+      {
+        rclcpp::Parameter(
+          "recalc_interval", std::numeric_limits<double>::quiet_NaN()),
+      });
+    auto node = std::make_shared<ChartDatumNode>(options);
+
+    ASSERT_NO_THROW(node->configure());
+    EXPECT_EQ(node->get_current_state().id(), kUnconfigured)
+      << "a NaN recalc_interval was accepted; the duration cast is undefined "
+         "behaviour for it";
+  }
+}
+
 // on_cleanup must release what on_configure created, and an endpoint is the
 // only part of that a peer can observe: a released subscription stops counting
 // against a publisher, a released publisher stops counting against a
@@ -626,6 +664,15 @@ TEST_F(LifecycleReconfigureTest, ChartDatumNodeStopsPublishingWhenFinalized)
 
   ASSERT_NO_THROW(node->configure());
   ASSERT_NO_THROW(node->activate());
+  // Endpoint match first, on the 15 s budget every other live case in this file
+  // uses. Without it the 5 s traffic budget below has to absorb DDS discovery
+  // as well, and a slow discovery would fail this case for a reason that has
+  // nothing to do with the code under test.
+  ASSERT_TRUE(
+    spin_until(
+      executor, [&] {return source_sub->get_publisher_count() > 0;},
+      std::chrono::seconds(15)))
+    << "the node's datum_source publisher never matched the peer";
   ASSERT_TRUE(
     spin_until(
       executor, [&] {return sources.size() >= 2;}, std::chrono::seconds(5)))
