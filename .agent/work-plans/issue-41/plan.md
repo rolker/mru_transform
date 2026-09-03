@@ -87,3 +87,24 @@ existing test:
 - `./platforms_ws/test.sh mru_transform` — the full suite, with no drop in
   count beyond the deliberately retired `test_datum_config` cases.
 - `/review-code` before push.
+
+## Implementation notes (kept in sync with the branch)
+
+Landed as planned, with three things the plan did not anticipate:
+
+1. **`chart_datum_node` needed an explicit `target_include_directories`.** It
+   had been inheriting `include/` from `datum_config`'s PUBLIC interface, so
+   deleting that target broke the build with a missing-header error rather
+   than a link error. Every other executable in the file already states it.
+2. **The per-point MHHW warning had to be dropped, not ported.** The library
+   returns `mhhw_z = nullopt` both for "no MHHW grids loaded" and for "no MHHW
+   coverage here", so the node can no longer distinguish them; warning on
+   every nullopt would fire forever on any deployment without MHHW grids. The
+   MLLW warning IS preserved. The library still reports the MHHW setup
+   situation once through `DiagFn`. This is a deliberate, documented reduction
+   — the only behaviour change in the branch.
+3. **Coverage was verified by name diff, not assumed.** All 21 retired
+   `test_datum_config` cases exist in the library's suite under identical
+   names (`comm -23` of the two sorted name lists is empty), plus 6 the old
+   suite did not have (`MakeVDatumQuery` ×4, `VDatumQuerySeam` ×2). Package
+   goes 93 → 71 tests; the library carries 27 datum cases and passes.
