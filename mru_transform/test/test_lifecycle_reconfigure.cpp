@@ -22,6 +22,7 @@
 
 #include <atomic>
 #include <filesystem>
+#include <fstream>
 #include <limits>
 
 #include <geometry_msgs/msg/twist_stamped.hpp>
@@ -600,6 +601,45 @@ TEST_F(LifecycleReconfigureTest, ChartDatumNodeConfiguresWhenGridDirIsEmpty)
   ASSERT_NO_THROW(node->configure());
   EXPECT_EQ(node->get_current_state().id(), kInactive)
     << "an empty grid directory must disable VDatum, not fail the transition";
+}
+
+// A malformed datum_config_path stays a LOUD failure -- unlike absent grids,
+// which degrade quietly. It is operator error on a safety-relevant file, and
+// the configure must fail rather than run on a half-parsed polygon set. The
+// retry then has to succeed, which is the #34 contract: the failed configure
+// releases what it allocated (now the RAII VDatum query and the entry list)
+// instead of leaking it once per retry.
+TEST_F(LifecycleReconfigureTest, ChartDatumNodeFailsLoudlyOnMalformedDatumConfig)
+{
+  const ScopedTempDir dir("bad_datum_config");
+  const auto bad = dir.path() / "bad.yaml";
+  const auto good = dir.path() / "good.yaml";
+  {
+    std::ofstream(bad) << "this is not a datum_polygons document\n";
+    std::ofstream(good) <<
+      "datum_polygons:\n"
+      "  - name: test\n"
+      "    chart_datum_z: -1.5\n"
+      "    ring:\n"
+      "      - [43.0, -70.8]\n"
+      "      - [43.0, -70.7]\n"
+      "      - [43.1, -70.7]\n";
+  }
+
+  rclcpp::NodeOptions options = isolated_options();
+  options.parameter_overrides(
+    {rclcpp::Parameter("datum_config_path", bad.string())});
+  auto node = std::make_shared<ChartDatumNode>(options);
+
+  ASSERT_NO_THROW(node->configure());
+  ASSERT_EQ(node->get_current_state().id(), kUnconfigured)
+    << "a malformed datum config must fail on_configure, not be tolerated";
+
+  node->set_parameter(rclcpp::Parameter("datum_config_path", good.string()));
+
+  ASSERT_NO_THROW(node->configure())
+    << "retry after a failed datum-config load threw (issue #34)";
+  EXPECT_EQ(node->get_current_state().id(), kInactive);
 }
 
 // Same defect shape as the buffer durations, on the other node's numbers: a

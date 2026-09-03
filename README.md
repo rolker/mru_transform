@@ -86,6 +86,15 @@ The active source is logged on change and published on the latched
 `datum_source` topic (`std_msgs/String`: `vdatum`, `polygon:<name>`, `param`, or
 `none`) so consumers and operators can tell a surveyed datum from `none`.
 
+**Where the implementation lives.** Neither the precedence chain nor the
+VDatum/PROJ query is in this package. Both are
+[`marine_vertical_datum`](https://github.com/rolker/unh_marine_autonomy/tree/jazzy/marine_vertical_datum)
+(core_ws, ROS-free), shared with the chart importers and CAMP so every consumer
+resolves a datum identically — [ADR-0010](https://github.com/rolker/unh_marine_autonomy/blob/jazzy/docs/decisions/0010-geospatial-world-model.md)
+D6. `chart_datum_node` is the ROS wrapper over it: parameters, TF, lifecycle.
+The polygon config format is documented by the example below, but it is parsed
+upstream — `load_datum_config` lives in the library.
+
 ### Parameters
 
 | Parameter | Default | Description |

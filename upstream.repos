@@ -6,12 +6,21 @@
 # geographic_info carries geodesy, used by mru_transform_node and
 # nav_sat_fix_to_velocity. It is NOT a resolvable rosdep key on jazzy -- a
 # clean-room build fails with "Unable to locate package ros-jazzy-geodesy"
-# without this file, which is how the ADR-0018 merge gate caught it.
+# without this entry (#10).
+#
+# unh_marine_autonomy carries marine_vertical_datum, the ROS-free
+# vertical-datum library chart_datum_node consumes (ADR-0010 D6, #41). Also not
+# a rosdep key, and find_package(marine_vertical_datum REQUIRED) is a build
+# stopper.
 #
 # Mirrors sensors_ws/src/cube_bathymetry/upstream.repos, which declares the
-# same repo for the same reason.
+# same two repos for the same reasons.
 repositories:
   geographic_info:
     type: git
     url: https://github.com/ros-geographic-info/geographic_info.git
     version: ros2
+  unh_marine_autonomy:
+    type: git
+    url: https://github.com/rolker/unh_marine_autonomy.git
+    version: jazzy

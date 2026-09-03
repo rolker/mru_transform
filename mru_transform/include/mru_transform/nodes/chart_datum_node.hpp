@@ -11,10 +11,12 @@
 //      (navigation continues on the ellipsoidal map / map_tide); a loud
 //      warning is logged. This is the #8 "optional/additive" chart_datum.
 //
-// The resolution itself lives in the pure mru_transform::resolve_datum() core
-// (datum_config.hpp) so the precedence is unit-testable. The active source is
-// logged and published on the latched `datum_source` topic so consumers and
-// operators can distinguish a surveyed datum from "none".
+// Neither the precedence chain nor the VDatum/PROJ query lives here: both are
+// the ROS-free marine_vertical_datum library in core_ws (ADR-0010 D6), shared
+// with the chart importers and CAMP so all three resolve a datum the same way.
+// This node is the ROS wrapper over it -- parameters, TF, lifecycle. The
+// active source is logged and published on the latched `datum_source` topic so
+// consumers and operators can distinguish a surveyed datum from "none".
 //
 // The offsets are position-dependent and recalculated periodically. Transforms
 // are published at a faster rate using cached values. Position is obtained from
@@ -37,8 +39,6 @@
 #include <string>
 #include <vector>
 
-#include "proj.h"
-
 #include "geodesy/ecef.h"
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_lifecycle/lifecycle_node.hpp"
@@ -49,7 +49,8 @@
 #include "tf2_ros/transform_broadcaster.h"
 #include "tf2_ros/transform_listener.h"
 
-#include "mru_transform/datum_config.hpp"
+#include "marine_vertical_datum/datum_config.hpp"
+#include "marine_vertical_datum/vdatum_query.hpp"
 
 class ChartDatumNode : public rclcpp_lifecycle::LifecycleNode
 {
@@ -64,11 +65,20 @@ public:
   }
 
   // The destructor is the last exit path, and the one a `finalized` node is
-  // most likely to be sitting on. cleanup_proj() alone was not enough: member
-  // subobjects are destroyed only AFTER this body returns, so publish_timer_
-  // and recalc_timer_ would still be armed while the PROJ context they call
-  // into was already freed -- precisely the use-after-free
-  // release_everything_on_configure_created() names and orders against. Benign
+  // most likely to be sitting on. Releasing the VDatum query alone is not
+  // enough: member subobjects are destroyed only AFTER this body returns, so
+  // publish_timer_ and recalc_timer_ would still be armed while the PROJ
+  // context they reach through vdatum_query_ was already freed -- precisely
+  // the use-after-free release_everything_on_configure_created() names and
+  // orders against. That ordering still matters after #41: the PROJ context
+  // moved inside the library's callable, but destroying vdatum_query_ still
+  // frees it, so the timers must be stopped first either way.
+  //
+  // Ordering NARROWS this window, it does not close it: SharedPtr::reset()
+  // neither cancels nor joins a callback already dispatched, and under
+  // composition this destructor runs on the container's unload thread rather
+  // than an executor thread. The node is single-threaded-executor only; see
+  // release_everything_on_configure_created(). Benign
   // under the single-threaded executor this node's main() uses, a real UAF
   // under a composed multi-threaded one. The helper is idempotent, so running
   // it here after an on_cleanup/on_shutdown/on_error has already run costs
@@ -184,9 +194,9 @@ public:
     }
 
     // VDatum is optional: enabled only when both grids are configured and the
-    // PROJ pipeline sets up. Failure here is non-fatal — the config/param/absent
-    // paths still let the boat operate anywhere.
-    vdatum_enabled_ = false;
+    // library's pipeline sets up. Failure here is non-fatal — the
+    // config/param/absent paths still let the boat operate anywhere.
+    vdatum_query_ = {};
     if (vdatum_grid_dir_.empty()) {
       RCLCPP_INFO(
         get_logger(),
@@ -195,9 +205,7 @@ public:
       RCLCPP_WARN(
         get_logger(),
         "vdatum_grid_dir is set but geoid_grid is empty — VDatum disabled");
-    } else if (setup_proj()) {
-      vdatum_enabled_ = true;
-    } else {
+    } else if (!setup_vdatum()) {
       RCLCPP_WARN(
         get_logger(),
         "VDatum setup failed — continuing without VDatum (config/param/absent)");
@@ -207,7 +215,7 @@ public:
     // an operator error worth failing loudly on (configure can be retried).
     if (!datum_config_path_.empty()) {
       try {
-        datum_entries_ = mru_transform::load_datum_config(datum_config_path_);
+        datum_entries_ = marine_vertical_datum::load_datum_config(datum_config_path_);
         RCLCPP_INFO(
           get_logger(), "Loaded %zu datum polygon(s) from %s",
           datum_entries_.size(), datum_config_path_.c_str());
@@ -218,10 +226,14 @@ public:
         // nothing else will ever release what this configure already allocated.
         // The supported recovery is to fix the config and configure again
         // (ChartDatumNodeRecoversFromFailedConfigure), and that retry would
-        // overwrite the PROJ context and both pipelines, leaking them once per
-        // retry. Release them here, on the way out. (#34)
-        cleanup_proj();
-        vdatum_enabled_ = false;
+        // overwrite the VDatum query, dropping the previous one's PROJ
+        // context and pipelines only if nothing else holds it. Release here,
+        // on the way out, so the retry starts clean. (#34)
+        //
+        // The query is RAII -- the library's callable owns the PROJ context
+        // and both pipelines, so assigning an empty function destroys them.
+        // That is what retired the hand-written cleanup_proj(). (#41)
+        vdatum_query_ = {};
         datum_entries_.clear();
         return CallbackReturn::FAILURE;
       }
@@ -339,8 +351,8 @@ private:
     publish_timer_.reset();
     recalc_timer_.reset();
 
-    cleanup_proj();
-    vdatum_enabled_ = false;
+    vdatum_query_ = {};
+    seen_mhhw_ = false;
     datum_entries_.clear();
     datum_source_ = "none";
     has_valid_mllw_ = false;
@@ -358,172 +370,104 @@ private:
     datum_source_pub_.reset();
   }
 
-  // Collect .gtx grid files matching a suffix (e.g., "_mllw")
-  std::string collect_grids(const std::string & suffix)
+  // Build the VDatum query from the library (ADR-0010 D6). The returned
+  // callable owns the PROJ context and pipelines, so there is nothing to
+  // release by hand -- dropping it destroys them. An EMPTY function means
+  // setup failed.
+  bool setup_vdatum()
   {
-    std::string grids;
-    for (const auto & entry :
-      std::filesystem::recursive_directory_iterator(vdatum_grid_dir_))
-    {
-      if (entry.path().extension() == ".gtx" &&
-        entry.path().stem().string().find(suffix) !=
-        std::string::npos)
-      {
-        if (!grids.empty()) {
-          grids += ",";
-        }
-        grids += entry.path().string();
-      }
-    }
-    return grids;
-  }
+    // DiagFn carries no severity, so buffer what the library reports and pick
+    // the level from the OUTCOME. setup_proj() logged the three fatal
+    // conditions -- unreadable grid dir, no *_mllw.gtx, pipeline creation
+    // failure -- at ERROR, and only the non-fatal MHHW ones at WARN. An empty
+    // query means VDatum is off for the whole session, so those messages are
+    // the fatal set; a live query means whatever was reported was MHHW-only.
+    // Losing that distinction would hide a misconfigured grid path from an
+    // operator whose log view filters to ERROR. (#41)
+    std::vector<std::string> messages;
+    auto diag = [&messages](const std::string & message) {
+        messages.push_back(message);
+      };
 
-  // Create a PROJ pipeline: ellipsoid → NAVD88 → target datum
-  PJ * create_pipeline(const std::string & datum_grids)
-  {
-    std::string pipeline =
-      "+proj=pipeline "
-      "+step +proj=vgridshift +grids=" + geoid_grid_path_ + " "
-      "+step +proj=vgridshift +grids=" + datum_grids;
+    // Named fields, not positional aggregate init: VDatumConfig is owned by
+    // another repo, and a future field reorder there would silently swap the
+    // geoid path with the grid directory -- which surfaces only as "no
+    // *_mllw.gtx found", i.e. VDatum quietly off on a boat.
+    marine_vertical_datum::VDatumConfig config;
+    config.geoid_grid = geoid_grid_path_;
+    config.vdatum_grid_dir = vdatum_grid_dir_;
 
-    PJ * pj = proj_create(proj_context_, pipeline.c_str());
-    if (!pj) {
-      RCLCPP_ERROR(
-        get_logger(), "Failed to create PROJ pipeline: %s",
-        proj_context_errno_string(
-          proj_context_, proj_context_errno(proj_context_)));
-    }
-    return pj;
-  }
+    vdatum_query_ = marine_vertical_datum::make_vdatum_query(config, diag);
+    const bool ok = static_cast<bool>(vdatum_query_);
 
-  bool setup_proj()
-  {
-    std::string mllw_grids;
-    std::string mhhw_grids;
-    try {
-      mllw_grids = collect_grids("_mllw");
-      mhhw_grids = collect_grids("_mhhw");
-    } catch (const std::filesystem::filesystem_error & e) {
-      RCLCPP_ERROR(
-        get_logger(), "Error scanning vdatum_grid_dir '%s': %s",
-        vdatum_grid_dir_.c_str(), e.what());
-      return false;
-    }
-
-    if (mllw_grids.empty()) {
-      RCLCPP_ERROR(
-        get_logger(), "No *_mllw.gtx files found in %s",
-        vdatum_grid_dir_.c_str());
-      return false;
-    }
-
-    RCLCPP_INFO(get_logger(), "Found MLLW grids in %s",
-      vdatum_grid_dir_.c_str());
-
-    proj_context_ = proj_context_create();
-    proj_context_set_enable_network(proj_context_, false);
-
-    proj_mllw_ = create_pipeline(mllw_grids);
-    if (!proj_mllw_) {
-      proj_context_destroy(proj_context_);
-      proj_context_ = nullptr;
-      return false;
-    }
-
-    RCLCPP_INFO(get_logger(), "PROJ MLLW pipeline ready");
-
-    if (!mhhw_grids.empty()) {
-      proj_mhhw_ = create_pipeline(mhhw_grids);
-      if (proj_mhhw_) {
-        RCLCPP_INFO(get_logger(), "PROJ MHHW pipeline ready");
+    for (const auto & message : messages) {
+      if (ok) {
+        RCLCPP_WARN(get_logger(), "VDatum: %s", message.c_str());
       } else {
-        RCLCPP_WARN(get_logger(),
-          "Failed to create MHHW pipeline — MHHW frame will not be published");
+        RCLCPP_ERROR(get_logger(), "VDatum: %s", message.c_str());
       }
-    } else {
-      RCLCPP_WARN(get_logger(),
-        "No *_mhhw.gtx files found — MHHW frame will not be published");
     }
 
-    return true;
-  }
-
-  void cleanup_proj()
-  {
-    if (proj_mllw_) {
-      proj_destroy(proj_mllw_);
-      proj_mllw_ = nullptr;
-    }
-    if (proj_mhhw_) {
-      proj_destroy(proj_mhhw_);
-      proj_mhhw_ = nullptr;
-    }
-    if (proj_context_) {
-      proj_context_destroy(proj_context_);
-      proj_context_ = nullptr;
-    }
-  }
-
-  // Query a PROJ pipeline and return the negated Z (datum below ellipsoid)
-  bool query_datum(PJ * pipeline, double lon_rad, double lat_rad,
-    double & result_z)
-  {
-    PJ_COORD input = proj_coord(lon_rad, lat_rad, 0.0, 0.0);
-    PJ_COORD output = proj_trans(pipeline, PJ_FWD, input);
-
-    if (output.xyz.z == HUGE_VAL ||
-      std::isinf(output.xyz.z) || std::isnan(output.xyz.z))
-    {
+    if (!ok) {
       return false;
     }
-
-    result_z = -output.xyz.z;
+    seen_mhhw_ = false;
+    RCLCPP_INFO(
+      get_logger(), "VDatum ready from %s", vdatum_grid_dir_.c_str());
     return true;
   }
 
   // Query the VDatum PROJ pipelines at a point. Returns nullopt when VDatum is
   // disabled or has no MLLW coverage there.
-  std::optional<mru_transform::VDatumResult> query_vdatum(
+  std::optional<marine_vertical_datum::VDatumResult> query_vdatum(
     double latitude, double longitude)
   {
-    if (!vdatum_enabled_) {
+    if (!vdatum_query_) {
       return std::nullopt;
     }
-    const double lon_rad = proj_torad(longitude);
-    const double lat_rad = proj_torad(latitude);
-
-    double mllw_z;
-    if (!query_datum(proj_mllw_, lon_rad, lat_rad, mllw_z)) {
+    auto result = vdatum_query_(latitude, longitude);
+    if (!result) {
+      // The library reports a per-point gap as a plain nullopt with no
+      // diagnostic, because a coverage gap is normal and the polygon chain
+      // handles it. The node still says so once every 30 s, because here a
+      // gap means the boat may end up with no chart datum at all.
       RCLCPP_WARN_THROTTLE(
         get_logger(), *get_clock(), 30000,
         "No VDatum MLLW coverage at (%.4f, %.4f)", latitude, longitude);
-      return std::nullopt;
+      return result;
     }
 
-    mru_transform::VDatumResult vr;
-    vr.mllw_z = mllw_z;
-    if (proj_mhhw_) {
-      double mhhw_z;
-      if (query_datum(proj_mhhw_, lon_rad, lat_rad, mhhw_z)) {
-        vr.mhhw_z = mhhw_z;
-      } else {
-        RCLCPP_WARN_THROTTLE(
-          get_logger(), *get_clock(), 30000,
-          "No VDatum MHHW coverage at (%.4f, %.4f)", latitude, longitude);
-      }
+    // MHHW needs its own signal, and the library cannot give us one: mhhw_z is
+    // nullopt both for "no MHHW grids were loaded" and for "no MHHW coverage
+    // at this point". Latching whether MHHW has EVER answered separates them.
+    // A deployment with no MHHW grids never warns (the library already said so
+    // once at setup); a boat that had MHHW and transits out of its coverage
+    // does. That transition is otherwise completely silent -- datum_source
+    // stays "vdatum" so the source-change INFO does not re-fire -- while
+    // chart_datum_mhhw stops being broadcast and sea_surface_estimator's tide
+    // plausibility bound fails open on the missing frame (#43). Dropping this
+    // warning would remove the only evidence that #43 had triggered. (#41)
+    if (result->mhhw_z) {
+      seen_mhhw_ = true;
+    } else if (seen_mhhw_) {
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 30000,
+        "No VDatum MHHW coverage at (%.4f, %.4f) — chart_datum_mhhw is not "
+        "being published and tide-range filtering is inactive", latitude,
+        longitude);
     }
-    return vr;
+    return result;
   }
 
   static std::string source_label(
-    mru_transform::DatumSource source, const std::string & name)
+    marine_vertical_datum::DatumSource source, const std::string & name)
   {
     switch (source) {
-      case mru_transform::DatumSource::VDATUM:
+      case marine_vertical_datum::DatumSource::VDATUM:
         return "vdatum";
-      case mru_transform::DatumSource::POLYGON_CONFIG:
+      case marine_vertical_datum::DatumSource::POLYGON_CONFIG:
         return "polygon:" + name;
-      case mru_transform::DatumSource::PARAM:
+      case marine_vertical_datum::DatumSource::PARAM:
         return "param";
     }
     return "unknown";
@@ -558,7 +502,7 @@ private:
     std::optional<double> lake_mhhw = std::isfinite(lake_datum_mhhw_) ?
       std::optional<double>(lake_datum_mhhw_) : std::nullopt;
 
-    auto result = mru_transform::resolve_datum(
+    auto result = marine_vertical_datum::resolve_datum(
       geo.latitude, geo.longitude, lake, lake_mhhw, vdatum, datum_entries_);
 
     if (!result.has_value()) {
@@ -681,14 +625,15 @@ private:
   rclcpp::TimerBase::SharedPtr publish_timer_;
   rclcpp::TimerBase::SharedPtr recalc_timer_;
 
-  // PROJ state
-  PJ_CONTEXT * proj_context_ = nullptr;
-  PJ * proj_mllw_ = nullptr;
-  PJ * proj_mhhw_ = nullptr;
-  bool vdatum_enabled_ = false;
+  // VDatum state. The library's callable owns the PROJ context and pipelines;
+  // an empty function means VDatum is disabled or failed to set up. (#41)
+  marine_vertical_datum::VDatumQueryFn vdatum_query_;
+  // Whether MHHW has ever answered, so a lost-coverage transition can be told
+  // apart from a deployment that simply has no MHHW grids. (#41)
+  bool seen_mhhw_ = false;
 
   // Polygon→datum config + fixed-value override.
-  std::vector<mru_transform::DatumEntry> datum_entries_;
+  std::vector<marine_vertical_datum::DatumEntry> datum_entries_;
   std::string datum_config_path_;
   double lake_datum_ = std::numeric_limits<double>::quiet_NaN();
   double lake_datum_mhhw_ = std::numeric_limits<double>::quiet_NaN();

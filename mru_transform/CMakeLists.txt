@@ -25,40 +25,11 @@ find_package(tf2_geometry_msgs REQUIRED)
 find_package(tf2_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
 
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(PROJ REQUIRED IMPORTED_TARGET proj)
-
-find_package(yaml-cpp REQUIRED)
-# yaml-cpp 0.8 exports the namespaced target; older versions export a bare one.
-if(TARGET yaml-cpp::yaml-cpp)
-  set(YAML_CPP_TARGET yaml-cpp::yaml-cpp)
-else()
-  set(YAML_CPP_TARGET yaml-cpp)
-endif()
-
-
-############################
-## datum resolution core  ##
-############################
-
-# Pure, ROS-free polygon/param/VDatum precedence resolution. Shared by
-# chart_datum_node and its unit test so the precedence is unit-testable.
-add_library(datum_config SHARED src/datum_config.cpp)
-target_include_directories(datum_config PUBLIC
-  "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
-  "$<INSTALL_INTERFACE:include/${PROJECT_NAME}>"
-)
-target_link_libraries(datum_config ${YAML_CPP_TARGET})
-# Export datum_config so downstream packages (e.g. cube_bathymetry's chart-prior
-# importer, rolker/unh_marine_autonomy#163) can link resolve_datum/load_datum_config
-# via find_package(mru_transform). Shares the package export set; header is installed
-# by the install(DIRECTORY include/ ...) below. (#28)
-install(TARGETS datum_config
-  EXPORT export_${PROJECT_NAME}
-  LIBRARY DESTINATION lib
-  ARCHIVE DESTINATION lib
-  RUNTIME DESTINATION bin
-)
+# The vertical-datum machinery lives in marine_vertical_datum (core_ws,
+# ROS-free) per ADR-0010 D6; this package consumes it rather than carrying its
+# own copy (#41). PROJ and yaml-cpp are that library's PRIVATE concern -- its
+# headers are free of both -- so neither is a dependency here any more.
+find_package(marine_vertical_datum REQUIRED)
 
 
 #############
@@ -103,10 +74,10 @@ install(
   DESTINATION include/${PROJECT_NAME}
   # nodes/ holds the four LifecycleNode classes, extracted so the in-process
   # lifecycle tests can construct them. They are not API: they sit in the
-  # global namespace, and chart_datum_node.hpp includes proj.h, which this
-  # package does not export -- so shipping them would offer downstream code a
-  # header that cannot compile. Keep them out of the installed include tree.
-  # (#34)
+  # global namespace, so shipping them would put unqualified names into every
+  # downstream translation unit. Keep them out of the installed include tree.
+  # (#34; the proj.h half of this rationale retired with #41, which moved the
+  # PROJ include into marine_vertical_datum.)
   PATTERN "nodes" EXCLUDE
 )
 
@@ -132,7 +103,6 @@ ament_export_dependencies(
   tf2_geometry_msgs
   tf2_msgs
   tf2_ros
-  yaml-cpp
 )
 
 #############
@@ -231,14 +201,20 @@ add_executable(
 
 target_link_libraries(chart_datum_node
   ${lifecycle_msgs_TARGETS}
-  datum_config
+  marine_vertical_datum::marine_vertical_datum
   rclcpp::rclcpp
   rclcpp_lifecycle::rclcpp_lifecycle
   ${geometry_msgs_TARGETS}
   ${std_msgs_TARGETS}
   tf2::tf2
   tf2_ros::tf2_ros
-  PkgConfig::PROJ
+)
+
+# Until #41 this path arrived implicitly through datum_config's PUBLIC include
+# interface. That target is gone, so state it the way every other executable
+# here already does.
+target_include_directories(chart_datum_node PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}/include"
 )
 
 ament_target_dependencies(chart_datum_node
@@ -291,15 +267,6 @@ if(BUILD_TESTING)
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
   )
 
-  # Issue #25: datum resolution precedence + point-in-polygon + config parsing.
-  ament_add_gtest(test_datum_config test/test_datum_config.cpp)
-  target_link_libraries(test_datum_config
-    datum_config
-  )
-  target_include_directories(test_datum_config PRIVATE
-    "${CMAKE_CURRENT_SOURCE_DIR}/include"
-  )
-
   # The water-line lever arm sea_surface_estimator applies to odom Z before
   # calling it the sea surface (the node's original TODO, 2026-08-21).
   ament_add_gtest(test_water_line_offset test/test_water_line_offset.cpp)
@@ -336,7 +303,7 @@ if(BUILD_TESTING)
     TIMEOUT 180)
   target_link_libraries(test_lifecycle_reconfigure
     ${lifecycle_msgs_TARGETS}
-    datum_config
+    marine_vertical_datum::marine_vertical_datum
     rclcpp::rclcpp
     rclcpp_lifecycle::rclcpp_lifecycle
     ${geographic_msgs_TARGETS}
@@ -347,7 +314,6 @@ if(BUILD_TESTING)
     ${tf2_msgs_TARGETS}
     tf2::tf2
     tf2_ros::tf2_ros
-    PkgConfig::PROJ
   )
   ament_target_dependencies(test_lifecycle_reconfigure
     geodesy
