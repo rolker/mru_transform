@@ -29,3 +29,26 @@ issue: 10
 - [ ] (suggestion) `sea_surface_estimator::is_out_of_range()` silently returns false when datum frames are absent, so the tide plausibility bound goes inert with no log — pre-existing fail-open whose probability this change raises — out of scope, follow-up
 - [ ] (suggestion) `geoid_grid` existence is never checked; a missing geoid with present grids surfaces as "No VDatum MLLW coverage", the wrong diagnosis — out of scope, follow-up
 - [ ] (suggestion) ben and seafloor_echoboat configure no polygon/lake fallback, so VDatum is their only datum source; not in the gate's host list — noted in PR body
+
+## Integrated Review
+**Status**: complete
+**When**: 2026-09-02 23:04 -04:00
+**By**: Claude Code Agent (Claude Opus 5 (1M context))
+
+**PR**: #42 at `6203d31`
+**Sources**: 3 (Copilot review @ `6203d31`, Local Review (Pre-Push) @ `fb929e0`, CI rollup)
+**Cross-source confirmations**: 0
+**CI**: no build/test CI exists in this repo (tracked as #35); the only check is the Copilot reviewer job, which passed
+
+### Findings
+- [ ] (valid, Copilot) `ChartDatumNodeConfiguresWhenGridDirIsEmpty` uses a fixed temp-dir name with non-RAII cleanup: an early `ASSERT` return skips `remove_all`, and the fixed path collides between concurrent runs of this binary — which line 70 of the same file documents as unisolated. Use a unique per-run directory and scope-based cleanup — `mru_transform/test/test_lifecycle_reconfigure.cpp:551`
+
+### Carried forward from the pre-push review (now tracked elsewhere, not open here)
+- Merge gate (salmon provisioning) — filed as unh_echoboats_project11#480; PR stays draft until resolved
+- `datum_source` has no operator surface — filed as #44
+- `sea_surface_estimator` tide bound fails open — filed as #43
+- `geoid_grid` existence unchecked — filed as #45
+- ben / seafloor_echoboat absent from the gate's host list — recorded in the PR body and #480
+
+### False positives
+- (none) The single Copilot finding was verified against the code and the concurrency note it cites; both check out.
