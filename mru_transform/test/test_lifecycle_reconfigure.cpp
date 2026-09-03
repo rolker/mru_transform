@@ -18,6 +18,10 @@
 #include <thread>
 #include <vector>
 
+#include <unistd.h>
+
+#include <atomic>
+#include <filesystem>
 #include <limits>
 
 #include <geometry_msgs/msg/twist_stamped.hpp>
@@ -68,6 +72,39 @@ constexpr std::uint8_t kFinalized =
 //   * the domain in CMakeLists.txt is hardcoded, so this does not isolate two
 //     concurrent runs of THIS test from each other (see the comment there).
 constexpr char kTestNamespace[] = "/mru_transform_lifecycle_test";
+
+// A temp directory that removes itself. The domain in CMakeLists.txt is
+// hardcoded (see the second limit above), so two concurrent runs of this
+// binary are NOT isolated from each other -- a fixed path would have one run
+// deleting the other's directory mid-test. The pid+counter suffix keeps them
+// apart, and the destructor removes the tree even when a test returns early
+// from a failed ASSERT, which a trailing remove_all() call does not.
+class ScopedTempDir
+{
+public:
+  explicit ScopedTempDir(const std::string & tag)
+  {
+    static std::atomic<unsigned> counter{0};
+    path_ = std::filesystem::temp_directory_path() /
+      ("mru_transform_" + tag + "_" + std::to_string(::getpid()) + "_" +
+      std::to_string(counter++));
+    std::filesystem::remove_all(path_);
+    std::filesystem::create_directories(path_);
+  }
+  ~ScopedTempDir()
+  {
+    std::error_code ec;                    // never throw from a destructor
+    std::filesystem::remove_all(path_, ec);
+  }
+  ScopedTempDir(const ScopedTempDir &) = delete;
+  ScopedTempDir & operator=(const ScopedTempDir &) = delete;
+
+  const std::filesystem::path & path() const {return path_;}
+  std::string string() const {return path_.string();}
+
+private:
+  std::filesystem::path path_;
+};
 
 rclcpp::NodeOptions isolated_options()
 {
@@ -511,6 +548,58 @@ TEST_F(LifecycleReconfigureTest, ChartDatumNodeRecoversFromFailedConfigure)
   ASSERT_NO_THROW(node->configure())
     << "retry after a failed configure threw (issue #34)";
   EXPECT_EQ(node->get_current_state().id(), kInactive);
+}
+
+// Grids are no longer shipped with the package: the build-time VDatum download
+// was removed (#10) and the grids are provisioned into ~/data/world/datum out
+// of band by enc_updater's datum provisioner. That makes "the configured grid
+// paths do not exist" a NORMAL state on any host the provisioner has not run
+// on, not the pathological one it used to be -- so it needs a regression test.
+//
+// VDatum setup failure must stay non-fatal: the node logs, disables VDatum,
+// and still reaches `inactive` so the polygon/param datum chain can serve.
+// Per #34, assert the resulting STATE -- rclcpp_lifecycle swallows exceptions
+// thrown from a transition callback, so ASSERT_NO_THROW alone cannot tell a
+// clean configure from a broken one.
+TEST_F(LifecycleReconfigureTest, ChartDatumNodeConfiguresWhenGridPathsAreMissing)
+{
+  rclcpp::NodeOptions options = isolated_options();
+  options.parameter_overrides(
+  {
+    rclcpp::Parameter(
+      "geoid_grid",
+      std::string("/nonexistent/mru_transform_test/geoid/us_noaa_g2018u0.tif")),
+    rclcpp::Parameter(
+      "vdatum_grid_dir", std::string("/nonexistent/mru_transform_test/vdatum")),
+  });
+  auto node = std::make_shared<ChartDatumNode>(options);
+
+  ASSERT_NO_THROW(node->configure());
+  EXPECT_EQ(node->get_current_state().id(), kInactive)
+    << "absent grid paths must disable VDatum, not fail the transition";
+}
+
+// The other half of the same contract: a grid directory that exists but holds
+// no *_mllw.gtx (a partial or interrupted provisioning run) takes a different
+// branch -- the directory scan succeeds and returns nothing, rather than
+// throwing filesystem_error -- and must degrade identically.
+TEST_F(LifecycleReconfigureTest, ChartDatumNodeConfiguresWhenGridDirIsEmpty)
+{
+  const ScopedTempDir dir("empty_vdatum");
+
+  rclcpp::NodeOptions options = isolated_options();
+  options.parameter_overrides(
+  {
+    rclcpp::Parameter(
+      "geoid_grid",
+      std::string("/nonexistent/mru_transform_test/geoid/us_noaa_g2018u0.tif")),
+    rclcpp::Parameter("vdatum_grid_dir", dir.string()),
+  });
+  auto node = std::make_shared<ChartDatumNode>(options);
+
+  ASSERT_NO_THROW(node->configure());
+  EXPECT_EQ(node->get_current_state().id(), kInactive)
+    << "an empty grid directory must disable VDatum, not fail the transition";
 }
 
 // Same defect shape as the buffer durations, on the other node's numbers: a

@@ -1,0 +1,17 @@
+# Unreleased source dependencies for mru_transform CI, cloned by industrial_ci
+# (UPSTREAM_WORKSPACE) into the upstream workspace and built before this
+# package. Also consumed by .agent/scripts/ci_local.sh (#577), which resolves
+# each ref to a SHA host-side and records it in the attestation note.
+#
+# geographic_info carries geodesy, used by mru_transform_node and
+# nav_sat_fix_to_velocity. It is NOT a resolvable rosdep key on jazzy -- a
+# clean-room build fails with "Unable to locate package ros-jazzy-geodesy"
+# without this file, which is how the ADR-0018 merge gate caught it.
+#
+# Mirrors sensors_ws/src/cube_bathymetry/upstream.repos, which declares the
+# same repo for the same reason.
+repositories:
+  geographic_info:
+    type: git
+    url: https://github.com/ros-geographic-info/geographic_info.git
+    version: ros2
