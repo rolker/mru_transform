@@ -90,13 +90,77 @@ The active source is logged on change and published on the latched
 
 | Parameter | Default | Description |
 |---|---|---|
-| `geoid_grid` | `""` | PROJ geoid grid (`.tif`) for ellipsoid → NAVD88. Needed for VDatum. |
-| `vdatum_grid_dir` | `""` | Directory of VDatum `*_mllw.gtx` / `*_mhhw.gtx` grids. Empty disables VDatum (non-fatal). |
+| `geoid_grid` | `""` | PROJ geoid grid (`.tif`) for ellipsoid → NAVD88. Needed for VDatum. `chart_datum_launch.py` overrides this to `~/data/world/datum/geoid/us_noaa_g2018u0.tif` (see [VDatum grids](#vdatum-grids)). |
+| `vdatum_grid_dir` | `""` | Directory of VDatum `*_mllw.gtx` / `*_mhhw.gtx` grids. Empty disables VDatum (non-fatal). `chart_datum_launch.py` overrides this to `~/data/world/datum/vdatum` (see [VDatum grids](#vdatum-grids)). |
 | `datum_config_path` | `""` | Path to a polygon→datum YAML (see `config/datum_polygons.example.yaml`). Empty = none. A malformed file fails `on_configure`. |
 | `lake_datum` | NaN (unset) | Fixed `chart_datum` height (m, rel. ellipsoid) that overrides VDatum/config everywhere. For quick one-offs/testing. |
 | `lake_datum_mhhw` | NaN (unset) | Optional fixed MHHW height to accompany `lake_datum`. |
 | `recalc_interval` | `60.0` | Seconds between position-based datum recomputes. Must be finite and > 0; `on_configure` fails otherwise. |
 | `publish_rate` | `1.0` | Hz at which cached transforms are republished. Must be finite and > 0; `on_configure` fails otherwise. An infinite rate would arm a zero-period timer. |
+
+### VDatum grids
+
+**This package does not ship, download, or install datum grids.** Under
+[ADR-0010](https://github.com/rolker/unh_marine_autonomy/blob/jazzy/docs/decisions/0010-geospatial-world-model.md)
+D5/D6 the grids live wherever imports run — dev machines and the boat as
+offline tooling — and never in the navigation runtime. The canonical on-host
+location is the world tree
+([unh_marine_autonomy#288](https://github.com/rolker/unh_marine_autonomy/issues/288)):
+
+```
+~/data/world/datum/geoid/us_noaa_g2018u0.tif   ellipsoid → NAVD88
+~/data/world/datum/vdatum/                     NAVD88 → MLLW/MHHW (*.gtx)
+```
+
+Provisioning is `enc_updater`'s datum provisioner
+([s57_tools#37](https://github.com/rolker/s57_tools/issues/37)), which fetches
+the SHA-256-pinned geoid and the configured VDatum bundles. Configure
+`vdatum_bundles` in the platform's `enc_updater` config (`MENHMAgome23_8301`
+for the Gulf of Maine) and run the updater on the host.
+
+`chart_datum_launch.py` defaults `geoid_grid` and `vdatum_grid_dir` to the
+world-tree paths above. Those defaults are `os.path.expanduser`-ed, so they
+resolve against the **launching process's** `HOME` — a unit or container that
+runs the stack as a different user than the one the provisioner populated
+resolves somewhere else. Pass absolute paths from the platform launch when the
+runtime user is not the provisioning user.
+
+Only the bundles listed in the platform's `enc_updater` config are fetched.
+The retired build-time download extracted every US region, so this narrows the
+operating envelope: deploying outside a configured bundle's coverage needs a
+config edit and a provisioner run **before** travel (the Lewes DE work needed
+`DEdelbay33_8301` + `DEVAemb23_8301`, for instance). Verify before deploying:
+
+```
+ls ~/data/world/datum/geoid/us_noaa_g2018u0.tif ~/data/world/datum/vdatum/*_mllw.gtx
+```
+
+### What absent grids actually cost
+
+VDatum setup failure is **non-fatal to the node** — it logs, disables VDatum,
+and still reaches `inactive`. It is **not** harmless to the output, and the
+severity depends entirely on what else the deployment configures:
+
+| Deployment | Effect of absent grids |
+|---|---|
+| A polygon covers the boat (`datum_config_path`), or `lake_datum` is set | Datum still resolves from that entry. Bizzy inside the Massabesic ring is this case. |
+| Configured, but the boat is outside every polygon | **No `chart_datum` / `chart_datum_mhhw` TF is published** (resolution order step 5). Bizzy at the Isles of Shoals is this case — there VDatum *is* the datum source. |
+| No `datum_config_path` and no `lake_datum` — the launch file's own defaults | **No datum is ever published.** VDatum was the only source. |
+
+So "non-fatal" means the node stays up, not that the datum survives. The
+observable signal is the latched `datum_source` topic reading `none`, plus one
+`ERROR` (the failed grid scan) and one `WARN` at `on_configure`. Note that a
+*missing* `vdatum_grid_dir` logs at `ERROR`, whereas deliberately setting
+`vdatum_grid_dir: ""` to disable VDatum logs at `INFO` — prefer the empty
+string on hosts that genuinely do not need grids, so a real provisioning gap
+stays visible as an error.
+
+Hosts upgrading past the build-time download can reclaim the orphaned copies,
+which nothing reads any more and `colcon` never prunes:
+
+```
+rm -rf ~/.cache/mru_transform <colcon-install>/mru_transform/share/mru_transform/data
+```
 
 ### Config file
 
