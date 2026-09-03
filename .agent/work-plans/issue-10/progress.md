@@ -41,7 +41,7 @@ issue: 10
 **CI**: no build/test CI exists in this repo (tracked as #35); the only check is the Copilot reviewer job, which passed
 
 ### Findings
-- [ ] (valid, Copilot) `ChartDatumNodeConfiguresWhenGridDirIsEmpty` uses a fixed temp-dir name with non-RAII cleanup: an early `ASSERT` return skips `remove_all`, and the fixed path collides between concurrent runs of this binary — which line 70 of the same file documents as unisolated. Use a unique per-run directory and scope-based cleanup — `mru_transform/test/test_lifecycle_reconfigure.cpp:551`
+- [x] (valid, Copilot) `ChartDatumNodeConfiguresWhenGridDirIsEmpty` uses a fixed temp-dir name with non-RAII cleanup: an early `ASSERT` return skips `remove_all`, and the fixed path collides between concurrent runs of this binary — which line 70 of the same file documents as unisolated. Use a unique per-run directory and scope-based cleanup — `mru_transform/test/test_lifecycle_reconfigure.cpp:551`
 
 ### Carried forward from the pre-push review (now tracked elsewhere, not open here)
 - Merge gate (salmon provisioning) — filed as unh_echoboats_project11#480; PR stays draft until resolved
