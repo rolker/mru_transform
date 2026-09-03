@@ -72,7 +72,13 @@ public:
   // the use-after-free release_everything_on_configure_created() names and
   // orders against. That ordering still matters after #41: the PROJ context
   // moved inside the library's callable, but destroying vdatum_query_ still
-  // frees it, so the timers must be stopped first either way. Benign
+  // frees it, so the timers must be stopped first either way.
+  //
+  // Ordering NARROWS this window, it does not close it: SharedPtr::reset()
+  // neither cancels nor joins a callback already dispatched, and under
+  // composition this destructor runs on the container's unload thread rather
+  // than an executor thread. The node is single-threaded-executor only; see
+  // release_everything_on_configure_created(). Benign
   // under the single-threaded executor this node's main() uses, a real UAF
   // under a composed multi-threaded one. The helper is idempotent, so running
   // it here after an on_cleanup/on_shutdown/on_error has already run costs
@@ -346,6 +352,7 @@ private:
     recalc_timer_.reset();
 
     vdatum_query_ = {};
+    seen_mhhw_ = false;
     datum_entries_.clear();
     datum_source_ = "none";
     has_valid_mllw_ = false;
@@ -366,17 +373,45 @@ private:
   // Build the VDatum query from the library (ADR-0010 D6). The returned
   // callable owns the PROJ context and pipelines, so there is nothing to
   // release by hand -- dropping it destroys them. An EMPTY function means
-  // setup failed; the reason has already gone to `diag` below.
+  // setup failed.
   bool setup_vdatum()
   {
-    auto diag = [this](const std::string & message) {
-        RCLCPP_WARN(get_logger(), "VDatum: %s", message.c_str());
+    // DiagFn carries no severity, so buffer what the library reports and pick
+    // the level from the OUTCOME. setup_proj() logged the three fatal
+    // conditions -- unreadable grid dir, no *_mllw.gtx, pipeline creation
+    // failure -- at ERROR, and only the non-fatal MHHW ones at WARN. An empty
+    // query means VDatum is off for the whole session, so those messages are
+    // the fatal set; a live query means whatever was reported was MHHW-only.
+    // Losing that distinction would hide a misconfigured grid path from an
+    // operator whose log view filters to ERROR. (#41)
+    std::vector<std::string> messages;
+    auto diag = [&messages](const std::string & message) {
+        messages.push_back(message);
       };
-    vdatum_query_ = marine_vertical_datum::make_vdatum_query(
-      {geoid_grid_path_, vdatum_grid_dir_}, diag);
-    if (!vdatum_query_) {
+
+    // Named fields, not positional aggregate init: VDatumConfig is owned by
+    // another repo, and a future field reorder there would silently swap the
+    // geoid path with the grid directory -- which surfaces only as "no
+    // *_mllw.gtx found", i.e. VDatum quietly off on a boat.
+    marine_vertical_datum::VDatumConfig config;
+    config.geoid_grid = geoid_grid_path_;
+    config.vdatum_grid_dir = vdatum_grid_dir_;
+
+    vdatum_query_ = marine_vertical_datum::make_vdatum_query(config, diag);
+    const bool ok = static_cast<bool>(vdatum_query_);
+
+    for (const auto & message : messages) {
+      if (ok) {
+        RCLCPP_WARN(get_logger(), "VDatum: %s", message.c_str());
+      } else {
+        RCLCPP_ERROR(get_logger(), "VDatum: %s", message.c_str());
+      }
+    }
+
+    if (!ok) {
       return false;
     }
+    seen_mhhw_ = false;
     RCLCPP_INFO(
       get_logger(), "VDatum ready from %s", vdatum_grid_dir_.c_str());
     return true;
@@ -399,6 +434,27 @@ private:
       RCLCPP_WARN_THROTTLE(
         get_logger(), *get_clock(), 30000,
         "No VDatum MLLW coverage at (%.4f, %.4f)", latitude, longitude);
+      return result;
+    }
+
+    // MHHW needs its own signal, and the library cannot give us one: mhhw_z is
+    // nullopt both for "no MHHW grids were loaded" and for "no MHHW coverage
+    // at this point". Latching whether MHHW has EVER answered separates them.
+    // A deployment with no MHHW grids never warns (the library already said so
+    // once at setup); a boat that had MHHW and transits out of its coverage
+    // does. That transition is otherwise completely silent -- datum_source
+    // stays "vdatum" so the source-change INFO does not re-fire -- while
+    // chart_datum_mhhw stops being broadcast and sea_surface_estimator's tide
+    // plausibility bound fails open on the missing frame (#43). Dropping this
+    // warning would remove the only evidence that #43 had triggered. (#41)
+    if (result->mhhw_z) {
+      seen_mhhw_ = true;
+    } else if (seen_mhhw_) {
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 30000,
+        "No VDatum MHHW coverage at (%.4f, %.4f) — chart_datum_mhhw is not "
+        "being published and tide-range filtering is inactive", latitude,
+        longitude);
     }
     return result;
   }
@@ -572,6 +628,9 @@ private:
   // VDatum state. The library's callable owns the PROJ context and pipelines;
   // an empty function means VDatum is disabled or failed to set up. (#41)
   marine_vertical_datum::VDatumQueryFn vdatum_query_;
+  // Whether MHHW has ever answered, so a lost-coverage transition can be told
+  // apart from a deployment that simply has no MHHW grids. (#41)
+  bool seen_mhhw_ = false;
 
   // Polygon→datum config + fixed-value override.
   std::vector<marine_vertical_datum::DatumEntry> datum_entries_;

@@ -18,6 +18,8 @@
 #include <thread>
 #include <vector>
 
+#include <filesystem>
+#include <fstream>
 #include <limits>
 
 #include <geometry_msgs/msg/twist_stamped.hpp>
@@ -511,6 +513,107 @@ TEST_F(LifecycleReconfigureTest, ChartDatumNodeRecoversFromFailedConfigure)
   ASSERT_NO_THROW(node->configure())
     << "retry after a failed configure threw (issue #34)";
   EXPECT_EQ(node->get_current_state().id(), kInactive);
+}
+
+// #41 moved the VDatum machinery into marine_vertical_datum. The plan for that
+// migration promised this branch would assert the preserved behaviour itself
+// rather than lean on the regression tests added under #10, which live on a
+// separate unmerged branch. These are those assertions.
+//
+// Per #34 the assertion is on the resulting lifecycle STATE: rclcpp_lifecycle
+// swallows exceptions thrown from a transition callback, so ASSERT_NO_THROW
+// alone cannot tell a clean configure from a broken one.
+
+// Grid paths that do not exist must disable VDatum and still configure, so the
+// polygon/param chain can serve. This is the routine state on any host the
+// datum provisioner has not run on.
+TEST_F(LifecycleReconfigureTest, ChartDatumNodeConfiguresWhenGridPathsAreMissing)
+{
+  rclcpp::NodeOptions options = isolated_options();
+  options.parameter_overrides(
+  {
+    rclcpp::Parameter(
+      "geoid_grid",
+      std::string("/nonexistent/mru_transform_test/geoid/us_noaa_g2018u0.tif")),
+    rclcpp::Parameter(
+      "vdatum_grid_dir", std::string("/nonexistent/mru_transform_test/vdatum")),
+  });
+  auto node = std::make_shared<ChartDatumNode>(options);
+
+  ASSERT_NO_THROW(node->configure());
+  EXPECT_EQ(node->get_current_state().id(), kInactive)
+    << "absent grid paths must disable VDatum, not fail the transition";
+}
+
+// The other branch: a directory that exists but holds no *_mllw.gtx (a partial
+// provisioning run) -- the scan succeeds and returns nothing rather than
+// throwing -- must degrade identically.
+TEST_F(LifecycleReconfigureTest, ChartDatumNodeConfiguresWhenGridDirIsEmpty)
+{
+  const auto dir = std::filesystem::temp_directory_path() /
+    "mru_transform_empty_vdatum_test";
+  std::filesystem::remove_all(dir);
+  std::filesystem::create_directories(dir);
+
+  rclcpp::NodeOptions options = isolated_options();
+  options.parameter_overrides(
+  {
+    rclcpp::Parameter(
+      "geoid_grid",
+      std::string("/nonexistent/mru_transform_test/geoid/us_noaa_g2018u0.tif")),
+    rclcpp::Parameter("vdatum_grid_dir", dir.string()),
+  });
+  auto node = std::make_shared<ChartDatumNode>(options);
+
+  ASSERT_NO_THROW(node->configure());
+  EXPECT_EQ(node->get_current_state().id(), kInactive)
+    << "an empty grid directory must disable VDatum, not fail the transition";
+
+  std::filesystem::remove_all(dir);
+}
+
+// A malformed datum_config_path stays a LOUD failure -- unlike absent grids,
+// which degrade quietly. It is operator error on a safety-relevant file, and
+// the configure must fail rather than run on a half-parsed polygon set. The
+// retry then has to succeed, which is the #34 contract: the failed configure
+// releases what it allocated (now the RAII VDatum query and the entry list)
+// instead of leaking it once per retry.
+TEST_F(LifecycleReconfigureTest, ChartDatumNodeFailsLoudlyOnMalformedDatumConfig)
+{
+  const auto dir = std::filesystem::temp_directory_path() /
+    "mru_transform_bad_datum_config_test";
+  std::filesystem::remove_all(dir);
+  std::filesystem::create_directories(dir);
+  const auto bad = dir / "bad.yaml";
+  const auto good = dir / "good.yaml";
+  {
+    std::ofstream(bad) << "this is not a datum_polygons document\n";
+    std::ofstream(good) <<
+      "datum_polygons:\n"
+      "  - name: test\n"
+      "    chart_datum_z: -1.5\n"
+      "    ring:\n"
+      "      - [43.0, -70.8]\n"
+      "      - [43.0, -70.7]\n"
+      "      - [43.1, -70.7]\n";
+  }
+
+  rclcpp::NodeOptions options = isolated_options();
+  options.parameter_overrides(
+    {rclcpp::Parameter("datum_config_path", bad.string())});
+  auto node = std::make_shared<ChartDatumNode>(options);
+
+  ASSERT_NO_THROW(node->configure());
+  ASSERT_EQ(node->get_current_state().id(), kUnconfigured)
+    << "a malformed datum config must fail on_configure, not be tolerated";
+
+  node->set_parameter(rclcpp::Parameter("datum_config_path", good.string()));
+
+  ASSERT_NO_THROW(node->configure())
+    << "retry after a failed datum-config load threw (issue #34)";
+  EXPECT_EQ(node->get_current_state().id(), kInactive);
+
+  std::filesystem::remove_all(dir);
 }
 
 // Same defect shape as the buffer durations, on the other node's numbers: a

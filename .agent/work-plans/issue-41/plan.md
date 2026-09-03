@@ -101,8 +101,38 @@ Landed as planned, with three things the plan did not anticipate:
    coverage here", so the node can no longer distinguish them; warning on
    every nullopt would fire forever on any deployment without MHHW grids. The
    MLLW warning IS preserved. The library still reports the MHHW setup
-   situation once through `DiagFn`. This is a deliberate, documented reduction
-   — the only behaviour change in the branch.
+   situation once through `DiagFn`.
+
+   **Round-2 correction**: review rejected this, correctly. Dropping the
+   warning removes the only evidence that #43's fail-open has triggered, while
+   #43 is still open — `chart_datum_mhhw` stops publishing, `datum_source`
+   stays `vdatum` so no source-change INFO fires, and
+   `sea_surface_estimator`'s tide bound silently stops filtering. The
+   "can't distinguish" argument was also defeatable without touching the
+   library: a latched `seen_mhhw_` separates "never had MHHW grids" (never
+   warn) from "had it, lost it here" (warn). Implemented; the warning is
+   preserved after all.
+
+4. **A second behaviour change, which the plan originally denied.** The
+   library `std::sort`s the grid paths before joining them into `+grids=`;
+   the deleted `collect_grids` used raw `recursive_directory_iterator` order.
+   PROJ takes the first grid with coverage, so in an **overlap** region the
+   answering grid — and the published `chart_datum` Z — can change. The
+   library's behaviour is the better one (deterministic across machines), and
+   it is inert on current deployments: `~/data/world/datum/vdatum` holds a
+   single bundle (`MENHMAgome23_8301`), so nothing overlaps. It is still a
+   silent numeric change and belongs in the PR body.
+
+5. **Diagnostic severity had to be reconstructed.** `DiagFn` carries no
+   severity, and routing it all to `RCLCPP_WARN` demoted three conditions the
+   old `setup_proj()` logged at `ERROR`. `setup_vdatum` now buffers the
+   messages and picks the level from the outcome — empty query means the fatal
+   set (ERROR), live query means MHHW-only (WARN).
+
+6. **`upstream.repos` added.** `find_package(marine_vertical_datum REQUIRED)`
+   is a build stopper and the library is not a rosdep key, so a clean-container
+   `ci_local.sh` run (the ADR-0018 merge gate) could not resolve it. Mirrors
+   `cube_bathymetry/upstream.repos`, which already declares the same repo.
 3. **Coverage was verified by name diff, not assumed.** All 21 retired
    `test_datum_config` cases exist in the library's suite under identical
    names (`comm -23` of the two sorted name lists is empty), plus 6 the old
