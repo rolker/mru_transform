@@ -18,6 +18,9 @@
 #include <thread>
 #include <vector>
 
+#include <unistd.h>
+
+#include <atomic>
 #include <filesystem>
 #include <fstream>
 #include <limits>
@@ -70,6 +73,39 @@ constexpr std::uint8_t kFinalized =
 //   * the domain in CMakeLists.txt is hardcoded, so this does not isolate two
 //     concurrent runs of THIS test from each other (see the comment there).
 constexpr char kTestNamespace[] = "/mru_transform_lifecycle_test";
+
+// A temp directory that removes itself. The domain in CMakeLists.txt is
+// hardcoded (see the second limit above), so two concurrent runs of this
+// binary are NOT isolated from each other -- a fixed path would have one run
+// deleting the other's directory mid-test. The pid+counter suffix keeps them
+// apart, and the destructor removes the tree even when a test returns early
+// from a failed ASSERT, which a trailing remove_all() call does not.
+class ScopedTempDir
+{
+public:
+  explicit ScopedTempDir(const std::string & tag)
+  {
+    static std::atomic<unsigned> counter{0};
+    path_ = std::filesystem::temp_directory_path() /
+      ("mru_transform_" + tag + "_" + std::to_string(::getpid()) + "_" +
+      std::to_string(counter++));
+    std::filesystem::remove_all(path_);
+    std::filesystem::create_directories(path_);
+  }
+  ~ScopedTempDir()
+  {
+    std::error_code ec;                    // never throw from a destructor
+    std::filesystem::remove_all(path_, ec);
+  }
+  ScopedTempDir(const ScopedTempDir &) = delete;
+  ScopedTempDir & operator=(const ScopedTempDir &) = delete;
+
+  const std::filesystem::path & path() const {return path_;}
+  std::string string() const {return path_.string();}
+
+private:
+  std::filesystem::path path_;
+};
 
 rclcpp::NodeOptions isolated_options()
 {
@@ -515,18 +551,17 @@ TEST_F(LifecycleReconfigureTest, ChartDatumNodeRecoversFromFailedConfigure)
   EXPECT_EQ(node->get_current_state().id(), kInactive);
 }
 
-// #41 moved the VDatum machinery into marine_vertical_datum. The plan for that
-// migration promised this branch would assert the preserved behaviour itself
-// rather than lean on the regression tests added under #10, which live on a
-// separate unmerged branch. These are those assertions.
+// Grids are no longer shipped with the package: the build-time VDatum download
+// was removed (#10) and the grids are provisioned into ~/data/world/datum out
+// of band by enc_updater's datum provisioner. That makes "the configured grid
+// paths do not exist" a NORMAL state on any host the provisioner has not run
+// on, not the pathological one it used to be -- so it needs a regression test.
 //
-// Per #34 the assertion is on the resulting lifecycle STATE: rclcpp_lifecycle
-// swallows exceptions thrown from a transition callback, so ASSERT_NO_THROW
-// alone cannot tell a clean configure from a broken one.
-
-// Grid paths that do not exist must disable VDatum and still configure, so the
-// polygon/param chain can serve. This is the routine state on any host the
-// datum provisioner has not run on.
+// VDatum setup failure must stay non-fatal: the node logs, disables VDatum,
+// and still reaches `inactive` so the polygon/param datum chain can serve.
+// Per #34, assert the resulting STATE -- rclcpp_lifecycle swallows exceptions
+// thrown from a transition callback, so ASSERT_NO_THROW alone cannot tell a
+// clean configure from a broken one.
 TEST_F(LifecycleReconfigureTest, ChartDatumNodeConfiguresWhenGridPathsAreMissing)
 {
   rclcpp::NodeOptions options = isolated_options();
@@ -545,15 +580,13 @@ TEST_F(LifecycleReconfigureTest, ChartDatumNodeConfiguresWhenGridPathsAreMissing
     << "absent grid paths must disable VDatum, not fail the transition";
 }
 
-// The other branch: a directory that exists but holds no *_mllw.gtx (a partial
-// provisioning run) -- the scan succeeds and returns nothing rather than
-// throwing -- must degrade identically.
+// The other half of the same contract: a grid directory that exists but holds
+// no *_mllw.gtx (a partial or interrupted provisioning run) takes a different
+// branch -- the directory scan succeeds and returns nothing, rather than
+// throwing filesystem_error -- and must degrade identically.
 TEST_F(LifecycleReconfigureTest, ChartDatumNodeConfiguresWhenGridDirIsEmpty)
 {
-  const auto dir = std::filesystem::temp_directory_path() /
-    "mru_transform_empty_vdatum_test";
-  std::filesystem::remove_all(dir);
-  std::filesystem::create_directories(dir);
+  const ScopedTempDir dir("empty_vdatum");
 
   rclcpp::NodeOptions options = isolated_options();
   options.parameter_overrides(
@@ -568,8 +601,6 @@ TEST_F(LifecycleReconfigureTest, ChartDatumNodeConfiguresWhenGridDirIsEmpty)
   ASSERT_NO_THROW(node->configure());
   EXPECT_EQ(node->get_current_state().id(), kInactive)
     << "an empty grid directory must disable VDatum, not fail the transition";
-
-  std::filesystem::remove_all(dir);
 }
 
 // A malformed datum_config_path stays a LOUD failure -- unlike absent grids,
@@ -580,12 +611,9 @@ TEST_F(LifecycleReconfigureTest, ChartDatumNodeConfiguresWhenGridDirIsEmpty)
 // instead of leaking it once per retry.
 TEST_F(LifecycleReconfigureTest, ChartDatumNodeFailsLoudlyOnMalformedDatumConfig)
 {
-  const auto dir = std::filesystem::temp_directory_path() /
-    "mru_transform_bad_datum_config_test";
-  std::filesystem::remove_all(dir);
-  std::filesystem::create_directories(dir);
-  const auto bad = dir / "bad.yaml";
-  const auto good = dir / "good.yaml";
+  const ScopedTempDir dir("bad_datum_config");
+  const auto bad = dir.path() / "bad.yaml";
+  const auto good = dir.path() / "good.yaml";
   {
     std::ofstream(bad) << "this is not a datum_polygons document\n";
     std::ofstream(good) <<
@@ -612,8 +640,6 @@ TEST_F(LifecycleReconfigureTest, ChartDatumNodeFailsLoudlyOnMalformedDatumConfig
   ASSERT_NO_THROW(node->configure())
     << "retry after a failed datum-config load threw (issue #34)";
   EXPECT_EQ(node->get_current_state().id(), kInactive);
-
-  std::filesystem::remove_all(dir);
 }
 
 // Same defect shape as the buffer durations, on the other node's numbers: a
