@@ -18,6 +18,7 @@
 #include <thread>
 #include <vector>
 
+#include <filesystem>
 #include <limits>
 
 #include <geometry_msgs/msg/twist_stamped.hpp>
@@ -511,6 +512,63 @@ TEST_F(LifecycleReconfigureTest, ChartDatumNodeRecoversFromFailedConfigure)
   ASSERT_NO_THROW(node->configure())
     << "retry after a failed configure threw (issue #34)";
   EXPECT_EQ(node->get_current_state().id(), kInactive);
+}
+
+// Grids are no longer shipped with the package: the build-time VDatum download
+// was removed (#10) and the grids are provisioned into ~/data/world/datum out
+// of band by enc_updater's datum provisioner. That makes "the configured grid
+// paths do not exist" a NORMAL state on any host the provisioner has not run
+// on, not the pathological one it used to be -- so it needs a regression test.
+//
+// VDatum setup failure must stay non-fatal: the node logs, disables VDatum,
+// and still reaches `inactive` so the polygon/param datum chain can serve.
+// Per #34, assert the resulting STATE -- rclcpp_lifecycle swallows exceptions
+// thrown from a transition callback, so ASSERT_NO_THROW alone cannot tell a
+// clean configure from a broken one.
+TEST_F(LifecycleReconfigureTest, ChartDatumNodeConfiguresWhenGridPathsAreMissing)
+{
+  rclcpp::NodeOptions options = isolated_options();
+  options.parameter_overrides(
+  {
+    rclcpp::Parameter(
+      "geoid_grid",
+      std::string("/nonexistent/mru_transform_test/geoid/us_noaa_g2018u0.tif")),
+    rclcpp::Parameter(
+      "vdatum_grid_dir", std::string("/nonexistent/mru_transform_test/vdatum")),
+  });
+  auto node = std::make_shared<ChartDatumNode>(options);
+
+  ASSERT_NO_THROW(node->configure());
+  EXPECT_EQ(node->get_current_state().id(), kInactive)
+    << "absent grid paths must disable VDatum, not fail the transition";
+}
+
+// The other half of the same contract: a grid directory that exists but holds
+// no *_mllw.gtx (a partial or interrupted provisioning run) takes a different
+// branch -- the directory scan succeeds and returns nothing, rather than
+// throwing filesystem_error -- and must degrade identically.
+TEST_F(LifecycleReconfigureTest, ChartDatumNodeConfiguresWhenGridDirIsEmpty)
+{
+  const auto dir = std::filesystem::temp_directory_path() /
+    "mru_transform_empty_vdatum_test";
+  std::filesystem::remove_all(dir);
+  std::filesystem::create_directories(dir);
+
+  rclcpp::NodeOptions options = isolated_options();
+  options.parameter_overrides(
+  {
+    rclcpp::Parameter(
+      "geoid_grid",
+      std::string("/nonexistent/mru_transform_test/geoid/us_noaa_g2018u0.tif")),
+    rclcpp::Parameter("vdatum_grid_dir", dir.string()),
+  });
+  auto node = std::make_shared<ChartDatumNode>(options);
+
+  ASSERT_NO_THROW(node->configure());
+  EXPECT_EQ(node->get_current_state().id(), kInactive)
+    << "an empty grid directory must disable VDatum, not fail the transition";
+
+  std::filesystem::remove_all(dir);
 }
 
 // Same defect shape as the buffer durations, on the other node's numbers: a
