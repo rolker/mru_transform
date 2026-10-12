@@ -1,0 +1,13 @@
+ci-local: pass
+repo: mru_transform
+commit: 87614a84f401e4ddd7c10401e9446292480e2a26
+image: ros2-agent-workspace-agent:latest
+image-id: sha256:bc672806657b196dee938c994a7ab48aac5e22c35aceca64c9153ade99fb3cfe
+packages: mru_transform mru_transform_interfaces
+scope: full
+upstream-repo: geographic_info@f70b81a438172cd7a066dc1b18314d70e0eb6389
+upstream-repo: unh_marine_autonomy@d9122f8f0b8f78f136c34d1e4191629f5d140a54
+steps: template+upstream+upstream-hook
+date: 2026-10-12T21:15:41Z
+host: deadpool
+log-sha256: 4393157b01ac21c634e8a285aeb6671bb76d917f740111018f1cb5bd65fdbe56
