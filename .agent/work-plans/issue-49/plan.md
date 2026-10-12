@@ -104,6 +104,12 @@ taken; owner decisions 1-4 unchanged, decision 3 and 4 refined below).
      so a fix between the default and the custom distance warns (or not) only if the right
      parameter is read; deleting the WARN fails the test; also first-fix anchor + far fix.
    - Each key test is checked to fail with the targeted code reverted.
+   - Implementation note: `RCLCPP_WARN_THROTTLE` keeps a static per-call-site timer, so only
+     one far-WARN can be observed per test process per 10 s. Tests not about the WARN get a
+     large `map_maximum_height_error` from the fixture; the WARN test orders its negative
+     case (default would warn, custom threshold must not) before the positive one (default
+     would not warn, custom 0.05 m must). The configured-origin path is covered by the
+     negative case; the positive case uses a first-fix anchor.
 8. **Docs** in the same PR: README `## Parameters` gets the three parameters (default,
    units, validation, read-once and runtime-set rejection, the altitude-0 convention stated
    as mru_transform's own, not a REP), a "Map origin" paragraph under Frames replacing
