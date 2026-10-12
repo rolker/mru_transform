@@ -18,7 +18,7 @@ Only the linear component of the velocity message is used. It describes velocity
 
 ## Frames
 
-A `map` frame is created centered on the first position fix. An `earth` frame is also created and a transformation from ECEF to ENU used by the `map` frame is published. A null transformation from `map` to `odom` is also published. Finally, a transformation from `odom` to `base_link` is published with each sensor update.
+A `map` frame is created at its origin, which is the first position fix unless a map origin is configured (see [Map origin](#map_origin_latitude-and-map_origin_longitude)). An `earth` frame is also created and a transformation from ECEF to ENU used by the `map` frame is published. A null transformation from `map` to `odom` is also published. Finally, a transformation from `odom` to `base_link` is published with each sensor update.
 
 Additional frames are published which may be useful in special cases, such as a sensor that publishes data that is already corrected for pitch and roll. The `base_link_north_up` represents a frame at the `base_link` location without any orientation applied. A level frame with only heading applied is also published as `base_link_level`.
 
@@ -52,6 +52,33 @@ A list of sensors which will be used in order. Each sensor entry has a name and 
     
 If no sensors are found, a default sensor will be created with topics `position`, `orientation` and `velocity`.
     
+### ~map_origin_latitude and ~map_origin_longitude
+
+Optional pre-defined map origin, in degrees. Without it the `map` frame is anchored at the first position fix, so its origin depends on where the boat happens to be when the node first gets a fix. With it, every boat or restart that uses the same values gets the same `map` frame.
+
+```yaml
+/**:
+  ros__parameters:
+    map_origin_latitude: 43.0   # write 43.0, not 43: an integer is a type error
+    map_origin_longitude: -70.0
+```
+
+- Both or neither. Only one set, a non-finite value, a latitude outside [-90, 90] or a longitude outside [-180, 180] stops the node at startup (a `FATAL` message with the reason, exit code 1; no publishers or services are created). Launch files that start the node without respawn will report the exit.
+- The origin is on the WGS84 ellipsoid: its altitude is always 0. This is mru_transform's own convention, as it is for the first-fix anchor, and it is not configurable.
+- Read once at startup. Setting these parameters on the running node is rejected ("restart the node to change it").
+- The node logs the anchor it used (configured or first fix) at `INFO` when the map frame is created.
+
+**`reset_map_frame`** (`std_srvs/srv/Trigger`):
+
+- If the map is already anchored, the next position fix becomes the new origin, **even if an origin is configured**. The configured origin no longer applies until the node restarts. The service response message says so.
+- If no position fix has anchored the map yet, there is nothing to re-anchor: a configured origin is kept and the first fix uses it. The response message says so.
+
+### ~map_maximum_height_error
+
+Default `0.5` (metres). The `map` frame is a flat tangent plane, so its height error grows with the horizontal distance `d` from its origin as about `d²/2R` ([#48](https://github.com/rolker/mru_transform/issues/48)). When that estimate exceeds this value, `updatePosition` logs a `WARN` (throttled to once per 10 s) giving the distance, the estimated error and what to do: configure `map_origin_latitude`/`map_origin_longitude` near the work area, or restart the node near it. Nothing is refused or dropped. The default corresponds to about 2.5 km from the origin.
+
+`d` is the horizontal distance (`hypot(x, y)`) of the position fix in `map`, before the sensor offset is applied, and `R` is the mean Earth radius (6371008.8 m). It is an estimate, not a bound: the local radius of curvature differs from the mean by up to about 1%. The check applies to the origin however it was set, including a first-fix anchor. Must be finite and greater than 0, otherwise the node stops at startup. Read once at startup, like the origin.
+
 ### ~base_frame, ~map_frame and ~odom_frame
 
 Override the frame_id's which default to `base_link`, `map` and `odom`. 
