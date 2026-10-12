@@ -150,7 +150,7 @@ size_t flat_plane_warnings()
   std::lock_guard<std::mutex> lock(g_log_mu);
   size_t count = 0;
   for (const auto & w : g_warnings) {
-    if (w.find("flat-plane height error") != std::string::npos) {
+    if (w.find("estimated height error") != std::string::npos) {
       ++count;
     }
   }
@@ -190,19 +190,10 @@ protected:
   }
 
   // Constructs a node (own namespace per test) with parameter overrides. The
-  // far-from-origin WARN is throttled by a static timer shared by every node
-  // in the process, so a test that is not about the WARN must not spend it:
-  // unless it sets its own threshold it gets a very large one.
+  // far-from-origin WARN throttle is per instance, so tests are independent.
   rclcpp::Node::SharedPtr make_node(std::vector<rclcpp::Parameter> overrides)
   {
     const auto * info = ::testing::UnitTest::GetInstance()->current_test_info();
-    bool has_threshold = false;
-    for (const auto & p : overrides) {
-      has_threshold = has_threshold || p.get_name() == "map_maximum_height_error";
-    }
-    if (!has_threshold) {
-      overrides.emplace_back("map_maximum_height_error", 1000.0);
-    }
     rclcpp::NodeOptions options;
     options.parameter_overrides(overrides);
     node_ = std::make_shared<rclcpp::Node>(
@@ -307,6 +298,7 @@ TEST_F(MapOriginNodeTest, IntegerOriginAndThresholdAreAcceptedAndUsedExactly)
       rclcpp::Parameter("map_origin_longitude", -70),
       rclcpp::Parameter("map_maximum_height_error", 1000)});
   mru_transform::MRUTransform mru(node);
+  EXPECT_EQ(mru.maxHeightError(), 1000.0);
   mru.updatePosition(fix(kFixLat, kFixLon));
   ASSERT_TRUE(mru.mapOrigin().has_value());
   EXPECT_EQ(mru.mapOrigin()->latitude, 43.0);
@@ -401,27 +393,56 @@ TEST_F(MapOriginNodeTest, RuntimeSetOfReadOnceParametersIsRejected)
   EXPECT_NEAR(mru.mapOrigin()->latitude, kOriginLat, kTolerance);
 }
 
-// The throttled WARN uses a static per-call-site timer, so only one positive
-// warning can be observed per process in 10 s: the negative checks come first
-// and the positive one is last. The distances are chosen so the DEFAULT
-// threshold (0.5 m, ~2.5 km) would give the opposite answer in each case,
-// which makes a wrongly read parameter (or no parameter) fail the test.
-TEST_F(MapOriginNodeTest, FarWarnHonoursTheConfiguredThreshold)
+// The WARN decision (bound exceeded + per-instance throttle on an injected
+// clock) is driven directly, so these do not depend on wall time or on other
+// tests.
+TEST_F(MapOriginNodeTest, DefaultThresholdIsHalfAMetre)
 {
-  // (1) ~3.0 km from the configured origin: 0.7 m, above the default, below
-  //     the configured 2.0 m -> no warning.
+  auto node = make_node({});
+  mru_transform::MRUTransform mru(node);
+  EXPECT_EQ(mru.maxHeightError(), 0.5);
+  // 0.5 m <-> ~2524 m.
+  const auto t0 = mru_transform::FarFromOriginWarning::Clock::now();
+  EXPECT_FALSE(mru.shouldWarnFarFromOrigin(2500.0, 0.0, t0));
+  EXPECT_TRUE(mru.shouldWarnFarFromOrigin(2550.0, 0.0, t0));
+}
+
+TEST_F(MapOriginNodeTest, FarWarnDecisionHonoursTheConfiguredThreshold)
+{
+  using Clock = mru_transform::FarFromOriginWarning::Clock;
+  const auto t0 = Clock::now();
   {
-    auto params = origin_params();
-    params.emplace_back("map_maximum_height_error", 2.0);
-    auto node = make_node(params);
+    // 3 km: above the default 0.5 m, below a configured 2.0 m.
+    auto node = make_node({rclcpp::Parameter("map_maximum_height_error", 2.0)});
     mru_transform::MRUTransform mru(node);
-    mru.updatePosition(fix(kOriginLat + 0.027, kOriginLon));
-    EXPECT_EQ(flat_plane_warnings(), 0u);
+    EXPECT_FALSE(mru.shouldWarnFarFromOrigin(3000.0, 0.0, t0));
     node_.reset();
   }
-  // (2) ~1.0 km, a first-fix anchor: 0.08 m, below the default, above the
-  //     configured 0.05 m -> the second fix warns. Also: nothing is refused, so
-  //     a map->base_link_north_up transform ~1 km out is still published.
+  // 1 km: below the default, above a configured 0.05 m.
+  auto node = make_node({rclcpp::Parameter("map_maximum_height_error", 0.05)});
+  mru_transform::MRUTransform mru(node);
+  EXPECT_TRUE(mru.shouldWarnFarFromOrigin(1000.0, 0.0, t0));
+}
+
+TEST_F(MapOriginNodeTest, FarWarnRepeatsEveryTenSecondsWhileExceeded)
+{
+  using Clock = mru_transform::FarFromOriginWarning::Clock;
+  auto node = make_node({});
+  mru_transform::MRUTransform mru(node);
+  const auto t0 = Clock::now();
+  EXPECT_TRUE(mru.shouldWarnFarFromOrigin(5000.0, 0.0, t0));
+  EXPECT_FALSE(mru.shouldWarnFarFromOrigin(5000.0, 0.0, t0 + 9s));
+  EXPECT_FALSE(mru.shouldWarnFarFromOrigin(10.0, 0.0, t0 + 9s));  // within bound: never
+  EXPECT_TRUE(mru.shouldWarnFarFromOrigin(5000.0, 0.0, t0 + 10s));
+  EXPECT_FALSE(mru.shouldWarnFarFromOrigin(5000.0, 0.0, t0 + 19s));
+  EXPECT_TRUE(mru.shouldWarnFarFromOrigin(5000.0, 0.0, t0 + 20s));
+}
+
+TEST_F(MapOriginNodeTest, FarFixLogsOneWarnAndStillPublishesTheTransform)
+{
+  // Wiring: updatePosition logs the WARN through the decision above, and
+  // nothing is refused. A first-fix anchor, then a fix ~1 km out against a
+  // 0.05 m threshold (the default would not warn there).
   auto node = make_node({rclcpp::Parameter("map_maximum_height_error", 0.05)});
   mru_transform::MRUTransform mru(node);
   mru.updatePosition(fix(kOriginLat, kOriginLon));
@@ -442,8 +463,19 @@ TEST_F(MapOriginNodeTest, FarWarnHonoursTheConfiguredThreshold)
     rclcpp::spin_some(node);
     std::this_thread::sleep_for(50ms);
   }
-  EXPECT_GE(flat_plane_warnings(), 1u);
+  EXPECT_EQ(flat_plane_warnings(), 1u);  // repeated fixes within 10 s: one line
   EXPECT_NEAR(published_north, 1000.0, 10.0);  // 0.009 deg of latitude ~ 1000 m
+  const auto text = [] {
+      std::lock_guard<std::mutex> lock(g_log_mu);
+      for (const auto & w : g_warnings) {
+        if (w.find("estimated height error") != std::string::npos) {
+          return w;
+        }
+      }
+      return std::string();
+    }();
+  EXPECT_NE(text.find("reset_map_frame"), std::string::npos) << text;
+  EXPECT_EQ(text.find("http"), std::string::npos) << text;
 }
 
 int main(int argc, char ** argv)

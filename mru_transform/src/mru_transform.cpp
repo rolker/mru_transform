@@ -145,14 +145,15 @@ void MRUTransform::updatePosition(PositionSensor::ValueType position)
 
   // The map is a flat tangent plane (#48): its height error grows as d^2/2R.
   // Warn, never refuse -- the fix is still the best position we have.
-  if(exceedsFlatPlaneBound(position_map.x, position_map.y, max_height_error_))
+  if(shouldWarnFarFromOrigin(position_map.x, position_map.y,
+                             FarFromOriginWarning::Clock::now()))
   {
     const double distance = std::hypot(position_map.x, position_map.y);
-    RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 10000,
-      "Position is %.0f m from the '%s' frame origin; the flat-plane height error there is "
-      "about %.2f m (limit map_maximum_height_error %.2f m). Configure map_origin_latitude/"
-      "map_origin_longitude near the work area, or restart the node near it (see "
-      "https://github.com/rolker/mru_transform/issues/48)",
+    RCLCPP_WARN(node_->get_logger(),
+      "Position is %.0f m from the '%s' frame origin: estimated height error %.2f m exceeds "
+      "map_maximum_height_error %.2f m. Set map_origin_latitude/map_origin_longitude near the "
+      "work area; a restart or reset_map_frame shifts the map frame under its consumers, so "
+      "only between missions.",
       distance, map_frame_.c_str(), flatPlaneHeightError(distance), max_height_error_);
   }
 
@@ -461,6 +462,14 @@ void MRUTransform::resetMapFrameService(const std_srvs::srv::Trigger::Request::S
     response->message += " The configured map origin (map_origin_latitude/map_origin_longitude) "
       "no longer applies until the node restarts.";
   }
+}
+
+bool MRUTransform::shouldWarnFarFromOrigin(
+  double x, double y, FarFromOriginWarning::Clock::time_point now)
+{
+  const bool exceeded = exceedsFlatPlaneBound(x, y, max_height_error_);
+  std::lock_guard<std::mutex> lock(state_mu_);
+  return far_warning_.shouldWarn(exceeded, now);
 }
 
 std::optional<geographic_msgs::msg::GeoPoint> MRUTransform::mapOrigin() const

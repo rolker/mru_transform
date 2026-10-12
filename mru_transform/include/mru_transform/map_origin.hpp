@@ -5,6 +5,7 @@
 // (mru_transform#49; the flat-plane design is #48). Header-only and free of
 // ROS node dependencies so they can be unit-tested without DDS.
 
+#include <chrono>
 #include <cmath>
 #include <optional>
 #include <sstream>
@@ -78,11 +79,39 @@ inline double flatPlaneHeightError(double horizontal_distance)
 
 /// True when the fix at (x, y) in the map frame is far enough from the map
 /// origin that the estimated flat-plane height error exceeds max_error.
-/// Horizontal only (z ignored), measured before any sensor offset.
+/// Horizontal only (z ignored), measured before any sensor offset. d is
+/// sqrt(x^2 + y^2); d^2 is formed directly rather than via a square root that
+/// is then squared again.
 inline bool exceedsFlatPlaneBound(double x, double y, double max_error)
 {
-  return flatPlaneHeightError(std::hypot(x, y)) > max_error;
+  return (x * x + y * y) / (2.0 * kMeanEarthRadius) > max_error;
 }
+
+/// Decides when the far-from-origin WARN is due: while the bound is exceeded,
+/// at most once per interval. The state lives in the instance (not in a
+/// per-call-site static, as RCLCPP_WARN_THROTTLE keeps it) and the time is
+/// passed in, so tests drive it directly and independently of each other.
+class FarFromOriginWarning
+{
+public:
+  using Clock = std::chrono::steady_clock;
+  static constexpr std::chrono::seconds kInterval{10};
+
+  bool shouldWarn(bool bound_exceeded, Clock::time_point now)
+  {
+    if (!bound_exceeded) {
+      return false;
+    }
+    if (last_ && now - *last_ < kInterval) {
+      return false;
+    }
+    last_ = now;
+    return true;
+  }
+
+private:
+  std::optional<Clock::time_point> last_;
+};
 
 }  // namespace mru_transform
 
