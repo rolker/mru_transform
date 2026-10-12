@@ -89,3 +89,24 @@ Scope Good; Issue alignment Good (all four checkpoint decisions and review-issue
 ### Gaps and follow-ups
 - This repo has no `.agents/README.md` (only `.agents/ci_local_upstream_extra.sh`), so no verified-parameter table was updated; creating the guide is a separate task.
 - Platform/launch follow-ups in other repos are listed in plan.md (unchanged; no other repo touched).
+
+## Implementation
+
+### Address review findings
+
+Fixes for the pre-push review findings 1-10. Commits are on feature/issue-49, not pushed.
+
+1. Node built inside the try, FATAL via `rclcpp::get_logger("mru_transform")` when it does not exist (fafcd0a). Not unit-testable; the typo'd-origin path was run by hand (FATAL line, exit 1).
+2. Integer or double accepted for `map_origin_latitude/longitude` and `map_maximum_height_error` via dynamic typing; other types refused with `std::invalid_argument` naming the parameter (f2128f9). Tests: IntegerOriginAndThresholdAreAcceptedAndUsedExactly, NonNumericTypesAreRefusedWithTheParameterName. Run by hand: `latitude:=43` starts and keeps running. With dynamic typing switched off, the integer test fails (mutation check).
+3. WARN text shortened, no URL, says a restart or `reset_map_frame` shifts the map frame (7a50388).
+4. Decision factored into `FarFromOriginWarning` plus `MRUTransform::shouldWarnFarFromOrigin` (instance state, injected time) (7a50388). Tests: DefaultThresholdIsHalfAMetre, FarWarnDecisionHonoursTheConfiguredThreshold, FarWarnRepeatsEveryTenSecondsWhileExceeded, FarFixLogsOneWarn... Removing the throttle fails the repeat and wiring tests (mutation check).
+5. configured_origin_ comment corrected (7a50388).
+6. Validation-ordering claim narrowed in code (f2128f9) and README (0837937).
+7. Single-threaded assumption stated at state_mu_ and in the node main (7a50388, fafcd0a).
+8. README notes a bad origin takes only this node down (0837937).
+9. test_map_origin uses ROS_DOMAIN_ID 87 (6d2a2a6).
+10. `exceedsFlatPlaneBound` uses x^2+y^2 directly (7a50388).
+
+Plan updated (18dd60c). Full `./platforms_ws/test.sh mru_transform`: 96 tests, 0 failures (test_map_origin 21, lifecycle_reconfigure 26, nav_source_selection 9, subscribe_once 1, twist_rotation 6, water_line_lever_arm 14, water_line_offset 12).
+
+Not verified: a failure of the `rclcpp::Node` constructor itself (hard to provoke; a bad remap fails earlier, in `rclcpp::init`).
