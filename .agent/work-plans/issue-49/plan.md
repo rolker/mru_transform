@@ -48,9 +48,10 @@ taken; owner decisions 1-4 unchanged, decision 3 and 4 refined below).
    **before** the broadcaster, odometry publisher and services are created:
    - `map_origin_latitude`, `map_origin_longitude`: declared `PARAMETER_DOUBLE` with no
      default, so "unset" is distinguishable from any value. Implementer verifies on jazzy
-     that `get_parameter` returns false for an uninitialised declared parameter. An
-     integer-typed value (`43`) is a type-mismatch exception -> startup failure; README
-     says write `43.0`.
+     that `get_parameter` returns false for an uninitialised declared parameter. 
+     [Revised after pre-push review: declared dynamically typed; INTEGER or DOUBLE is
+     accepted and converted (also for `map_maximum_height_error`), any other type is a
+     startup failure. The README no longer says to write `43.0`.]
    - `map_maximum_height_error` (m, default `0.5`, ~2.5 km from the anchor): finite and
      > 0, else startup failure. Named for the repo's spelled-out `maximum_` convention; it
      applies to any anchor, first-fix included, hence no `map_origin_` prefix.
@@ -94,7 +95,7 @@ taken; owner decisions 1-4 unchanged, decision 3 and 4 refined below).
      public `updatePosition` and asserting through `mapOrigin()`:
      (a) configured origin used; the first fix is tens of metres+ away from it (> tolerance)
      and the origin altitude is exactly 0; (b) unset -> anchor equals the first fix
-     (altitude 0); (c) partial / invalid / integer-typed params -> constructor throws;
+     (altitude 0); (c) partial / invalid / a non-numeric typed param -> constructor throws; integers accepted;
      bad threshold -> throws; (d) reset after anchoring with an origin configured ->
      next fix re-anchors at that fix, message says the origin no longer applies; (e) reset
      BEFORE any fix with an origin configured -> origin kept, first fix uses it, message
@@ -177,3 +178,15 @@ Nodes started via `mru_transform_node` in `layers/main`, to set an origin per si
 ## Estimated Scope
 
 Single PR, one repo (rolker/mru_transform), roughly 150 lines of code plus ~200 lines of tests and docs.
+
+## Revision after pre-push review (#49)
+
+- Integer YAML values are accepted for the three numeric parameters (dynamic typing,
+  converted to double); other types are refused with `std::invalid_argument`.
+- The far WARN no longer uses `RCLCPP_WARN_THROTTLE` (a per-call-site static). The
+  decision lives in `FarFromOriginWarning` (map_origin.hpp, instance state, injected
+  steady-clock time) behind `MRUTransform::shouldWarnFarFromOrigin`, which the tests
+  drive directly; so the earlier "negative case first" ordering constraint on the tests
+  no longer applies. The repeating text is short, has no URL, and names the
+  map-frame-shift consequence of a restart or `reset_map_frame`.
+- The 10 s throttle and the default threshold (0.5 m) are asserted in tests.
