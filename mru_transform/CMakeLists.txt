@@ -350,6 +350,25 @@ if(BUILD_TESTING)
   target_include_directories(test_nav_source_selection PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
   )
+
+  # mru_transform#49: pre-defined map origin, reset_map_frame semantics, and the
+  # far-from-origin WARN. Builds real nodes and talks to them, so it gets the
+  # same host-local, dedicated-domain isolation as test_lifecycle_reconfigure
+  # (and the same caveat about concurrent runs sharing the domain).
+  ament_add_gtest(test_map_origin test/test_map_origin.cpp TIMEOUT 120)
+  target_link_libraries(test_map_origin
+    ${PROJECT_NAME}
+    rclcpp::rclcpp
+    ${geographic_msgs_TARGETS}
+    ${std_srvs_TARGETS}
+    ${tf2_msgs_TARGETS}
+  )
+  target_include_directories(test_map_origin PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/include"
+  )
+  set_tests_properties(test_map_origin PROPERTIES
+    ENVIRONMENT "ROS_DOMAIN_ID=88;ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST;ROS_DISCOVERY_SERVER=;ROS_STATIC_PEERS=;FASTRTPS_DEFAULT_PROFILES_FILE=;CYCLONEDDS_URI="
+  )
 endif()
 
 ament_package()
