@@ -21,3 +21,18 @@ issue: 49
 - [ ] Require that a configured origin has a defined validity bound (d^2/2R height error) and a warning or refusal beyond it.
 - [ ] If implemented: add tests (configured origin used instead of first fix, reset behaviour, unset = current behaviour), and update README parameter docs and .agents/README.md verified-parameter table in the same PR (new parameter(s)).
 - [ ] Note for downstream: map_tide / chart_datum_node / sea_surface_estimator consume the map origin altitude (0 today); a configured ellipsoid height changes their inputs, so check them if altitude is configurable.
+
+
+## Plan Authored
+**Status**: complete
+**When**: 2026-10-12 15:40 -04:00
+**By**: Claude Code Agent (Claude Sonnet)
+
+**Plan**: `.agent/work-plans/issue-49/plan.md` at `b8887be`
+**Branch**: feature/issue-49 at `b8887be`
+**Phases**: single
+
+### Open questions
+- [ ] Default for map_origin_max_height_error: proposed 0.5 m (~2.5 km); owner to confirm.
+- [ ] Log-only announcement of the active origin (no topic) is enough? Proposed yes.
+- [ ] Repo has no .agents/README.md (no verified-parameter table): create as a separate task; README is the sole parameter doc here.
