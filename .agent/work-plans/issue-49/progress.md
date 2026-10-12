@@ -63,3 +63,29 @@ Owner decisions 1-4 (2026-10-12): the plan matches all four; no departures found
 
 ### Dimension summary
 Scope Good; Issue alignment Good (all four checkpoint decisions and review-issue actions covered; `.agents/README.md` genuinely absent, gap noted correctly); File targeting Needs work (follow-ups); Consequences Needs work; Docs impact Good; Principle alignment Good; ADR compliance Needs work (wording only); ROS conventions Needs work (naming, startup failure, runtime param change).
+
+## Implementation
+**Status**: complete
+**When**: 2026-10-12
+**By**: Claude Code Agent (Claude Sonnet 5.5)
+
+**Branch**: feature/issue-49 (not pushed)
+
+### What was built
+- `map_origin.hpp`: `validateMapOrigin`, `validateMaxHeightError`, `flatPlaneHeightError` (d^2/2R, R = 6371008.8 m), `exceedsFlatPlaneBound` (hypot of x, y in map).
+- Parameters `map_origin_latitude` / `map_origin_longitude` (typed double, no default; altitude exactly 0) and `map_maximum_height_error` (default 0.5 m), validated at the top of the constructor before publishers/services, read once; an on-set callback rejects runtime sets.
+- `mru_transform_node` main: catch, `RCLCPP_FATAL`, `rclcpp::shutdown()`, exit 1 (checked by hand: half-set origin and integer-typed latitude both exit 1).
+- `reset_map_frame`: after anchoring re-anchors at the current fix and drops the configured origin; before any fix keeps it. Messages say so. Anchor state guarded by `state_mu_`; `mapOrigin()` accessor.
+- Throttled WARN (10 s) with distance, estimated error, limit and remedy; also for first-fix anchors.
+- README: parameters, Frames sentence, reset semantics (both cases), WARN, startup failure.
+
+### Tests
+`test_map_origin`: 17 (5 validation, 3 flat-plane, 9 node-level). Other packages' xunit unchanged and green: lifecycle 26, water_line_lever_arm 14, water_line_offset 12, nav_source_selection 9, twist_rotation 6, subscribe_once 1. 0 failures. No ament linters are declared in package.xml, so none ran; the new code compiles without new warnings under -Wall -Wextra -Wpedantic. Mutations checked (each failed the named tests): WARN removed, threshold hard-coded to 0.5, configured origin ignored, origin dropped early on reset, origin not cleared on reset.
+
+### Deviations
+- `RCLCPP_WARN_THROTTLE` uses a static per-call-site timer, so one far-WARN per test process per 10 s: fixture gives non-WARN tests a large threshold and the WARN test orders negative before positive (recorded in plan.md). Positive case uses a first-fix anchor; the configured-origin path is covered by the negative case only.
+- Integer-typed origin test asserts only that the constructor throws (rclcpp's exception type).
+
+### Gaps and follow-ups
+- This repo has no `.agents/README.md` (only `.agents/ci_local_upstream_extra.sh`), so no verified-parameter table was updated; creating the guide is a separate task.
+- Platform/launch follow-ups in other repos are listed in plan.md (unchanged; no other repo touched).
