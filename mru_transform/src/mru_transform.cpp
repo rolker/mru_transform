@@ -20,28 +20,43 @@ MRUTransform::MRUTransform(rclcpp::Node::SharedPtr node)
 : sensors_(*node, true),
   node_(node)
 {
-  // Map origin and flat-plane bound, validated before any publisher or service
-  // exists so a bad configuration fails startup with nothing half-built. The
-  // origin parameters have a declared type and no default, so "unset" cannot
-  // be confused with any value (an integer-typed value is a type mismatch and
-  // also fails startup).
+  // Map origin and flat-plane bound, validated before the odometry publisher,
+  // the transform broadcaster and this node's services are created, so a bad
+  // configuration fails startup before the node does anything. (sensors_ is
+  // constructed first and already created its subscriptions and publishers.)
+  // The parameters are dynamically typed so a YAML integer (`latitude: 43`) is
+  // accepted like a double; any other type is refused. The origin parameters
+  // have no default, so "unset" cannot be confused with any value.
   {
-    auto read_optional_double = [this](const std::string & name) -> std::optional<double> {
-        node_->declare_parameter(name, rclcpp::ParameterType::PARAMETER_DOUBLE);
+    auto read_number = [this](const std::string & name, const rclcpp::ParameterValue & initial)
+      -> std::optional<double> {
+        rcl_interfaces::msg::ParameterDescriptor descriptor;
+        descriptor.dynamic_typing = true;
+        node_->declare_parameter(name, initial, descriptor);
         rclcpp::Parameter parameter;
-        if (node_->get_parameter(name, parameter) &&
-          parameter.get_type() == rclcpp::ParameterType::PARAMETER_DOUBLE)
-        {
-          return parameter.as_double();
+        if (!node_->get_parameter(name, parameter)) {
+          return std::nullopt;
         }
-        return std::nullopt;
+        switch (parameter.get_type()) {
+          case rclcpp::ParameterType::PARAMETER_NOT_SET:
+            return std::nullopt;
+          case rclcpp::ParameterType::PARAMETER_INTEGER:
+            return static_cast<double>(parameter.as_int());
+          case rclcpp::ParameterType::PARAMETER_DOUBLE:
+            return parameter.as_double();
+          default:
+            throw std::invalid_argument(
+              name + " must be a number (integer or double), got type " +
+              parameter.get_type_name());
+        }
       };
     configured_origin_ = validateMapOrigin(
-      read_optional_double("map_origin_latitude"), read_optional_double("map_origin_longitude"));
+      read_number("map_origin_latitude", rclcpp::ParameterValue()),
+      read_number("map_origin_longitude", rclcpp::ParameterValue()));
 
-    node_->declare_parameter("map_maximum_height_error", max_height_error_);
     max_height_error_ = validateMaxHeightError(
-      node_->get_parameter("map_maximum_height_error").as_double());
+      read_number("map_maximum_height_error", rclcpp::ParameterValue(max_height_error_))
+      .value_or(max_height_error_));
 
     // These are read once. Refuse a runtime set rather than let it succeed
     // and do nothing.

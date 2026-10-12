@@ -300,12 +300,33 @@ TEST_F(MapOriginNodeTest, InvalidConfigurationThrowsFromTheConstructor)
     std::invalid_argument);
 }
 
-TEST_F(MapOriginNodeTest, IntegerTypedOriginFailsStartup)
+TEST_F(MapOriginNodeTest, IntegerOriginAndThresholdAreAcceptedAndUsedExactly)
 {
-  // `43` rather than `43.0` is a type mismatch; it must not be read as unset.
-  EXPECT_ANY_THROW(
-    mru_transform::MRUTransform(make_node({rclcpp::Parameter("map_origin_latitude", 43),
-        rclcpp::Parameter("map_origin_longitude", -70.0)})));
+  // A YAML `latitude: 43` / `map_maximum_height_error: 1` must not stop the node.
+  auto node = make_node({rclcpp::Parameter("map_origin_latitude", 43),
+      rclcpp::Parameter("map_origin_longitude", -70),
+      rclcpp::Parameter("map_maximum_height_error", 1000)});
+  mru_transform::MRUTransform mru(node);
+  mru.updatePosition(fix(kFixLat, kFixLon));
+  ASSERT_TRUE(mru.mapOrigin().has_value());
+  EXPECT_EQ(mru.mapOrigin()->latitude, 43.0);
+  EXPECT_EQ(mru.mapOrigin()->longitude, -70.0);
+}
+
+TEST_F(MapOriginNodeTest, NonNumericTypesAreRefusedWithTheParameterName)
+{
+  try {
+    mru_transform::MRUTransform mru(make_node({rclcpp::Parameter("map_origin_latitude", "43.0"),
+        rclcpp::Parameter("map_origin_longitude", -70.0)}));
+    FAIL() << "expected throw";
+  } catch (const std::invalid_argument & e) {
+    EXPECT_NE(std::string(e.what()).find("map_origin_latitude"), std::string::npos) << e.what();
+    EXPECT_NE(std::string(e.what()).find("number"), std::string::npos) << e.what();
+  }
+  node_.reset();
+  EXPECT_THROW(
+    mru_transform::MRUTransform(make_node({rclcpp::Parameter("map_maximum_height_error", true)})),
+    std::invalid_argument);
 }
 
 TEST_F(MapOriginNodeTest, ResetAfterAnchoringReanchorsAtTheCurrentFix)
