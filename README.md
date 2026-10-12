@@ -59,11 +59,12 @@ Optional pre-defined map origin, in degrees. Without it the `map` frame is ancho
 ```yaml
 /**:
   ros__parameters:
-    map_origin_latitude: 43.0   # write 43.0, not 43: an integer is a type error
+    map_origin_latitude: 43.0
     map_origin_longitude: -70.0
 ```
 
-- Both or neither. Only one set, a non-finite value, a latitude outside [-90, 90] or a longitude outside [-180, 180] stops the node at startup (a `FATAL` message with the reason, exit code 1; no publishers or services are created). Launch files that start the node without respawn will report the exit.
+- Both or neither. Only one set, a non-finite value, a latitude outside [-90, 90] or a longitude outside [-180, 180] stops the node at startup (a `FATAL` message with the reason, exit code 1). The values are validated before the odometry publisher, the transform broadcaster and the node's services are created. Integer and double values are both accepted (`43` and `43.0`); any other type (a string, a boolean) stops the node.
+- **A bad origin takes only this node down.** The rest of a launch keeps running, so a boat can be up without the `map` frame, `odom` or the `map_tide` inputs. After a change to the origin, look for the `mru_transform failed:` FATAL line.
 - The origin is on the WGS84 ellipsoid: its altitude is always 0. This is mru_transform's own convention, as it is for the first-fix anchor, and it is not configurable.
 - Read once at startup. Setting these parameters on the running node is rejected ("restart the node to change it").
 - The node logs the anchor it used (configured or first fix) at `INFO` when the map frame is created.
@@ -75,9 +76,9 @@ Optional pre-defined map origin, in degrees. Without it the `map` frame is ancho
 
 ### ~map_maximum_height_error
 
-Default `0.5` (metres). The `map` frame is a flat tangent plane, so its height error grows with the horizontal distance `d` from its origin as about `d²/2R` ([#48](https://github.com/rolker/mru_transform/issues/48)). When that estimate exceeds this value, `updatePosition` logs a `WARN` (throttled to once per 10 s) giving the distance, the estimated error and what to do: configure `map_origin_latitude`/`map_origin_longitude` near the work area, or restart the node near it. Nothing is refused or dropped. The default corresponds to about 2.5 km from the origin.
+Default `0.5` (metres). The `map` frame is a flat tangent plane, so its height error grows with the horizontal distance `d` from its origin as about `d²/2R` ([#48](https://github.com/rolker/mru_transform/issues/48)). When that estimate exceeds this value, `updatePosition` logs a `WARN` giving the distance, the estimated error and the remedy: configure `map_origin_latitude`/`map_origin_longitude` near the work area. The WARN repeats every 10 s for as long as the bound is exceeded. Restarting the node or calling `reset_map_frame` near the work area also fixes it, but moves the `map` frame under everything that uses it (planners, CUBE, `map_tide`, displays), so do that between missions. Nothing is refused or dropped. The default corresponds to about 2.5 km from the origin.
 
-`d` is the horizontal distance (`hypot(x, y)`) of the position fix in `map`, before the sensor offset is applied, and `R` is the mean Earth radius (6371008.8 m). It is an estimate, not a bound: the local radius of curvature differs from the mean by up to about 1%. The check applies to the origin however it was set, including a first-fix anchor. Must be finite and greater than 0, otherwise the node stops at startup. Read once at startup, like the origin.
+`d` is the horizontal distance (`sqrt(x² + y²)`) of the position fix in `map`, before the sensor offset is applied, and `R` is the mean Earth radius (6371008.8 m). It is an estimate, not a bound: the local radius of curvature differs from the mean by up to about 1%. The check applies to the origin however it was set, including a first-fix anchor. Must be a number (integer or double), finite and greater than 0, otherwise the node stops at startup. Read once at startup, like the origin.
 
 ### ~base_frame, ~map_frame and ~odom_frame
 
