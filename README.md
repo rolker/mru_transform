@@ -18,7 +18,7 @@ Only the linear component of the velocity message is used. It describes velocity
 
 ## Frames
 
-A `map` frame is created centered on the first position fix. An `earth` frame is also created and a transformation from ECEF to ENU used by the `map` frame is published. A null transformation from `map` to `odom` is also published. Finally, a transformation from `odom` to `base_link` is published with each sensor update.
+A `map` frame is created at its origin, which is the first position fix unless a map origin is configured (see [Map origin](#map_origin_latitude-and-map_origin_longitude)). An `earth` frame is also created and a transformation from ECEF to ENU used by the `map` frame is published. A null transformation from `map` to `odom` is also published. Finally, a transformation from `odom` to `base_link` is published with each sensor update.
 
 Additional frames are published which may be useful in special cases, such as a sensor that publishes data that is already corrected for pitch and roll. The `base_link_north_up` represents a frame at the `base_link` location without any orientation applied. A level frame with only heading applied is also published as `base_link_level`.
 
@@ -52,6 +52,34 @@ A list of sensors which will be used in order. Each sensor entry has a name and 
     
 If no sensors are found, a default sensor will be created with topics `position`, `orientation` and `velocity`.
     
+### ~map_origin_latitude and ~map_origin_longitude
+
+Optional pre-defined map origin, in degrees. Without it the `map` frame is anchored at the first position fix, so its origin depends on where the boat happens to be when the node first gets a fix. With it, every boat or restart that uses the same values gets the same `map` frame.
+
+```yaml
+/**:
+  ros__parameters:
+    map_origin_latitude: 43.0
+    map_origin_longitude: -70.0
+```
+
+- Both or neither. Only one set, a non-finite value, a latitude outside [-90, 90] or a longitude outside [-180, 180] stops the node at startup (a `FATAL` message with the reason, exit code 1). The values are validated before the odometry publisher, the transform broadcaster and the node's services are created. Integer and double values are both accepted (`43` and `43.0`); any other type (a string, a boolean) stops the node.
+- **A bad origin takes only this node down.** The rest of a launch keeps running, so a boat can be up without the `map` frame, `odom` or the `map_tide` inputs. After a change to the origin, look for the `mru_transform failed:` FATAL line.
+- The origin is on the WGS84 ellipsoid: its altitude is always 0. This is mru_transform's own convention, as it is for the first-fix anchor, and it is not configurable.
+- Read once at startup. Setting these parameters on the running node is rejected ("restart the node to change it").
+- The node logs the anchor it used (configured or first fix) at `INFO` when the map frame is created.
+
+**`reset_map_frame`** (`std_srvs/srv/Trigger`):
+
+- If the map is already anchored, the next position fix becomes the new origin, **even if an origin is configured**. The configured origin no longer applies until the node restarts. The service response message says so.
+- If no position fix has anchored the map yet, there is nothing to re-anchor: a configured origin is kept and the first fix uses it. The response message says so.
+
+### ~map_maximum_height_error
+
+Default `0.5` (metres). The `map` frame is a flat tangent plane, so its height error grows with the horizontal distance `d` from its origin as about `d²/2R` ([#48](https://github.com/rolker/mru_transform/issues/48)). When that estimate exceeds this value, `updatePosition` logs a `WARN` giving the distance, the estimated error and the remedy: configure `map_origin_latitude`/`map_origin_longitude` near the work area. The WARN repeats every 10 s for as long as the bound is exceeded. Restarting the node or calling `reset_map_frame` near the work area also fixes it, but moves the `map` frame under everything that uses it (planners, CUBE, `map_tide`, displays), so do that between missions. Nothing is refused or dropped. The default corresponds to about 2.5 km from the origin.
+
+`d` is the horizontal distance (`sqrt(x² + y²)`) of the position fix in `map`, before the sensor offset is applied, and `R` is the mean Earth radius (6371008.8 m). It is an estimate, not a bound: the local radius of curvature differs from the mean by up to about 1%. The check applies to the origin however it was set, including a first-fix anchor. Must be a number (integer or double), finite and greater than 0, otherwise the node stops at startup. Read once at startup, like the origin.
+
 ### ~base_frame, ~map_frame and ~odom_frame
 
 Override the frame_id's which default to `base_link`, `map` and `odom`. 

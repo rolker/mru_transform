@@ -20,6 +20,64 @@ MRUTransform::MRUTransform(rclcpp::Node::SharedPtr node)
 : sensors_(*node, true),
   node_(node)
 {
+  // Map origin and flat-plane bound, validated before the odometry publisher,
+  // the transform broadcaster and this node's services are created, so a bad
+  // configuration fails startup before the node does anything. (sensors_ is
+  // constructed first and already created its subscriptions and publishers.)
+  // The parameters are dynamically typed so a YAML integer (`latitude: 43`) is
+  // accepted like a double; any other type is refused. The origin parameters
+  // have no default, so "unset" cannot be confused with any value.
+  {
+    auto read_number = [this](const std::string & name, const rclcpp::ParameterValue & initial)
+      -> std::optional<double> {
+        rcl_interfaces::msg::ParameterDescriptor descriptor;
+        descriptor.dynamic_typing = true;
+        node_->declare_parameter(name, initial, descriptor);
+        rclcpp::Parameter parameter;
+        if (!node_->get_parameter(name, parameter)) {
+          return std::nullopt;
+        }
+        switch (parameter.get_type()) {
+          case rclcpp::ParameterType::PARAMETER_NOT_SET:
+            return std::nullopt;
+          case rclcpp::ParameterType::PARAMETER_INTEGER:
+            return static_cast<double>(parameter.as_int());
+          case rclcpp::ParameterType::PARAMETER_DOUBLE:
+            return parameter.as_double();
+          default:
+            throw std::invalid_argument(
+              name + " must be a number (integer or double), got type " +
+              parameter.get_type_name());
+        }
+      };
+    configured_origin_ = validateMapOrigin(
+      read_number("map_origin_latitude", rclcpp::ParameterValue()),
+      read_number("map_origin_longitude", rclcpp::ParameterValue()));
+
+    max_height_error_ = validateMaxHeightError(
+      read_number("map_maximum_height_error", rclcpp::ParameterValue(max_height_error_))
+      .value_or(max_height_error_));
+
+    // These are read once. Refuse a runtime set rather than let it succeed
+    // and do nothing.
+    set_parameters_handle_ = node_->add_on_set_parameters_callback(
+      [](const std::vector<rclcpp::Parameter> & parameters) {
+        rcl_interfaces::msg::SetParametersResult result;
+        result.successful = true;
+        for (const auto & parameter : parameters) {
+          const auto & name = parameter.get_name();
+          if (name == "map_origin_latitude" || name == "map_origin_longitude" ||
+            name == "map_maximum_height_error")
+          {
+            result.successful = false;
+            result.reason = name + " is read once at startup; restart the node to change it";
+            break;
+          }
+        }
+        return result;
+      });
+  }
+
   node_->declare_parameter("map_frame", map_frame_);
   node_->get_parameter("map_frame", map_frame_);
 
@@ -56,14 +114,48 @@ void MRUTransform::updatePosition(PositionSensor::ValueType position)
   if(std::isnan(position.position.altitude))
     position.position.altitude = 0.0;
 
-  if(!mapFrame_)
+  std::shared_ptr<MapFrame> map_frame;
   {
-    auto map_origin = position.position;
-    map_origin.altitude = 0.0;
-    mapFrame_ = std::shared_ptr<MapFrame>(new MapFrame(node_, map_origin, map_frame_, odom_frame_));
+    std::lock_guard<std::mutex> lock(state_mu_);
+    if(!mapFrame_)
+    {
+      geographic_msgs::msg::GeoPoint map_origin;
+      if(configured_origin_)
+      {
+        map_origin = *configured_origin_;
+        RCLCPP_INFO(node_->get_logger(),
+          "Anchoring map frame '%s' at the configured origin lat %.8f lon %.8f (altitude 0)",
+          map_frame_.c_str(), map_origin.latitude, map_origin.longitude);
+      }
+      else
+      {
+        map_origin = position.position;
+        map_origin.altitude = 0.0;
+        RCLCPP_INFO(node_->get_logger(),
+          "Anchoring map frame '%s' at the first position fix lat %.8f lon %.8f (altitude 0)",
+          map_frame_.c_str(), map_origin.latitude, map_origin.longitude);
+      }
+      mapFrame_ = std::shared_ptr<MapFrame>(new MapFrame(node_, map_origin, map_frame_, odom_frame_));
+      map_origin_ = map_origin;
+    }
+    map_frame = mapFrame_;
   }
-  auto transforms = mapFrame_->getTransforms(position.header.stamp);
-  auto position_map = mapFrame_->toLocal(position.position);
+  auto transforms = map_frame->getTransforms(position.header.stamp);
+  auto position_map = map_frame->toLocal(position.position);
+
+  // The map is a flat tangent plane (#48): its height error grows as d^2/2R.
+  // Warn, never refuse -- the fix is still the best position we have.
+  if(shouldWarnFarFromOrigin(position_map.x, position_map.y,
+                             FarFromOriginWarning::Clock::now()))
+  {
+    const double distance = std::hypot(position_map.x, position_map.y);
+    RCLCPP_WARN(node_->get_logger(),
+      "Position is %.0f m from the '%s' frame origin: estimated height error %.2f m exceeds "
+      "map_maximum_height_error %.2f m. Set map_origin_latitude/map_origin_longitude near the "
+      "work area; a restart or reset_map_frame shifts the map frame under its consumers, so "
+      "only between missions.",
+      distance, map_frame_.c_str(), flatPlaneHeightError(distance), max_height_error_);
+  }
 
   // account for sensor offset from base_link
   tf2::Vector3 sensor_offset(0.0, 0.0, 0.0);
@@ -341,10 +433,49 @@ void MRUTransform::updateVelocity(const VelocitySensor::ValueType &velocity)
 void MRUTransform::resetMapFrameService(const std_srvs::srv::Trigger::Request::SharedPtr request,
                                         std_srvs::srv::Trigger::Response::SharedPtr response)
 {
-  // Reset the map frame
-  mapFrame_.reset();
+  std::lock_guard<std::mutex> lock(state_mu_);
   response->success = true;
-  response->message = "Map frame has been reset";
+  if(!mapFrame_)
+  {
+    // Nothing has anchored the map yet, so there is nothing to re-anchor and a
+    // configured origin has not been consumed: keep it.
+    if(configured_origin_)
+    {
+      response->message = "Map frame is not anchored yet; nothing was reset. The configured map "
+        "origin (map_origin_latitude/map_origin_longitude) is kept and the first position fix "
+        "will use it.";
+    }
+    else
+    {
+      response->message = "Map frame is not anchored yet; nothing was reset. It will be anchored "
+        "at the first position fix.";
+    }
+    return;
+  }
+  const bool had_configured_origin = configured_origin_.has_value();
+  mapFrame_.reset();
+  map_origin_.reset();
+  configured_origin_.reset();
+  response->message = "Map frame has been reset; it will be re-anchored at the next position fix.";
+  if(had_configured_origin)
+  {
+    response->message += " The configured map origin (map_origin_latitude/map_origin_longitude) "
+      "no longer applies until the node restarts.";
+  }
+}
+
+bool MRUTransform::shouldWarnFarFromOrigin(
+  double x, double y, FarFromOriginWarning::Clock::time_point now)
+{
+  const bool exceeded = exceedsFlatPlaneBound(x, y, max_height_error_);
+  std::lock_guard<std::mutex> lock(state_mu_);
+  return far_warning_.shouldWarn(exceeded, now);
+}
+
+std::optional<geographic_msgs::msg::GeoPoint> MRUTransform::mapOrigin() const
+{
+  std::lock_guard<std::mutex> lock(state_mu_);
+  return map_origin_;
 }
 
 } // namespace mru_transform

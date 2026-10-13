@@ -3,6 +3,8 @@
 
 #include <array>
 #include <mutex>
+#include <optional>
+#include <string>
 
 #include "rclcpp/rclcpp.hpp"
 #include "nav_msgs/msg/odometry.hpp"
@@ -12,6 +14,8 @@
 #include "std_msgs/msg/string.hpp"
 #include "mru_transform/navigation_sensors.hpp"
 #include "mru_transform/map_frame.hpp"
+#include "mru_transform/map_origin.hpp"
+#include "geographic_msgs/msg/geo_point.hpp"
 #include "tf2_ros/buffer.h"
 #include "tf2_ros/transform_broadcaster.h"
 #include "tf2_ros/transform_listener.h"
@@ -28,6 +32,20 @@ public:
   void updateOrientation(const OrientationSensor::ValueType &orientation);
   void updateVelocity(const VelocitySensor::ValueType &velocity);
 
+  /// The active map anchor (WGS84, altitude 0), or nullopt until a position
+  /// fix has anchored the map. Primarily a test seam.
+  std::optional<geographic_msgs::msg::GeoPoint> mapOrigin() const;
+
+  /// The effective map_maximum_height_error (m). Test seam.
+  double maxHeightError() const {return max_height_error_;}
+
+  /// Whether the far-from-origin WARN is due for a fix at (x, y) in the map
+  /// frame at time `now`: the flat-plane bound is exceeded and the last WARN
+  /// was at least FarFromOriginWarning::kInterval ago. Records the WARN when
+  /// it returns true. updatePosition calls this; it is public so tests can
+  /// drive the decision with injected times.
+  bool shouldWarnFarFromOrigin(double x, double y, FarFromOriginWarning::Clock::time_point now);
+
 private:
   void resetMapFrameService(const std_srvs::srv::Trigger::Request::SharedPtr request,
                             std_srvs::srv::Trigger::Response::SharedPtr response);
@@ -39,7 +57,24 @@ private:
   std::string odom_frame_ = "odom";
   std::string odom_topic_ = "odom";
 
+  // Anchor state, guarded by state_mu_. configured_origin_ is the origin from
+  // the map_origin_latitude/longitude parameters; it is kept until
+  // reset_map_frame drops it (anchoring a fix does not consume it), so it only
+  // applies while mapFrame_ is unset. map_origin_ is the anchor mapFrame_ was
+  // built at.
+  //
+  // Threading: this class assumes a single-threaded executor. The node runs
+  // under rclcpp::spin in nodes/mru_transform_node.cpp, which serializes all
+  // callbacks, so reset_map_frame cannot interleave with a position update
+  // (updatePosition takes a copy of mapFrame_ under state_mu_ and then uses it
+  // unlocked). Under a multithreaded executor a reset and a position update
+  // would have to become one transaction.
   std::shared_ptr<MapFrame> mapFrame_;
+  std::optional<geographic_msgs::msg::GeoPoint> configured_origin_;
+  std::optional<geographic_msgs::msg::GeoPoint> map_origin_;
+  double max_height_error_{0.5};
+  FarFromOriginWarning far_warning_;  // guarded by state_mu_
+  rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr set_parameters_handle_;
   std::shared_ptr<tf2_ros::TransformBroadcaster> broadcaster_;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_pub_;
 
@@ -48,7 +83,7 @@ private:
   // and publishes.  Design goal: callbacks can safely run concurrently
   // under a MultiThreadedExecutor (no shared nav_msgs::msg::Odometry
   // member being mutated from three threads).
-  std::mutex state_mu_;
+  mutable std::mutex state_mu_;
   bool have_position_{false};
   bool have_orientation_{false};
   geometry_msgs::msg::Point latest_position_map_;     // set by updatePosition
