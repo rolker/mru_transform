@@ -457,7 +457,23 @@ TEST_F(MapOriginNodeTest, FarFixLogsOneWarnAndStillPublishesTheTransform)
         }
       }
     });
-  const auto deadline = std::chrono::steady_clock::now() + 15s;
+  // Discovery first, with no far fix sent: however long it takes on a loaded
+  // runner, it cannot run into the WARN interval.
+  const auto discovery_deadline = std::chrono::steady_clock::now() + 30s;
+  while (listener->get_publisher_count() == 0 &&
+    std::chrono::steady_clock::now() < discovery_deadline)
+  {
+    rclcpp::spin_some(node);
+    std::this_thread::sleep_for(50ms);
+  }
+  ASSERT_GT(listener->get_publisher_count(), 0u) << "/tf broadcaster never discovered";
+
+  // Far fixes are repeated (matching may complete on the publisher side a little
+  // after this side), but only for less than one WARN interval from the first,
+  // so exactly one WARN is the only correct outcome.
+  const auto first_far = std::chrono::steady_clock::now();
+  const auto deadline =
+    first_far + mru_transform::FarFromOriginWarning::kInterval - 2s;
   while (std::isnan(published_north) && std::chrono::steady_clock::now() < deadline) {
     mru.updatePosition(fix(kOriginLat + 0.009, kOriginLon));
     rclcpp::spin_some(node);
