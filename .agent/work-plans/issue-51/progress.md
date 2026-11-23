@@ -57,3 +57,17 @@ issue: 51
 - [ ] Correct cause 2's counts: the `.h` includes in tests are in three files (`test_twist_rotation.cpp`, `test_water_line_offset.cpp`, `test_water_line_lever_arm.cpp`), not four. The removed-header list is otherwise complete: Rolling's `tf2/` has only `.hpp` for `tf2/utils` and `tf2/LinearMath/{Matrix3x3,Quaternion,Vector3}`; `tf2_geometry_msgs` is already `.hpp`. The 12 deprecated `tf2_ros/*.h` includes check out (`mru_transform.hpp` 3, `chart_datum_node.hpp` 3, `sea_surface_estimator.hpp` 3, `map_frame.hpp` 1, `water_line_lever_arm.hpp` 1, `test_water_line_lever_arm.cpp` 1).
 - [ ] Say that causes 10 (GCC 15 template bodies in `gz4d_geo.h`), 12 (GDAL) and 13 (Nav2 lifecycle header) do not apply: nothing here includes `gz4d`, GDAL or Nav2 (PROJ and yaml-cpp moved into `marine_vertical_datum`, #41), so only a build can add to the list. `nav_sat_fix_to_velocity.hpp` also includes `geodesy/geodesics.h` and `wgs84.h`; check they exist in Jazzy's 1.0.6 (the CI job on `f70b81a` covers this either way).
 - [ ] Remove the dead commented-out copy of the `CMakeLists.txt` at the bottom of `mru_transform_interfaces/CMakeLists.txt` only if touching that file for the 3.8 line anyway; otherwise leave it, as it is not part of the port.
+
+## Checkpoint
+**Status**: complete
+**When**: 2026-11-23 09:04 -05:00
+**By**: Claude Code Agent (claude-fable-5-2)
+**Decided-by**: host (the Issue Review found the issue well-scoped; its seven actions correct or extend the cause list inside the same two packages and none changes scope)
+**After**: issue-actions
+**Decision**: proceed
+
+Read: the Issue Review of 51 (well-scoped, right repository, no design change). Its actions go to the planner as inputs:
+
+- Taken into the plan: the existing CI scaffold (`upstream.repos`, `.agents/ci_local_upstream_extra.sh`) is either used by the new workflow or retired in the same change; cause 9 (`<test_depend>` after `<member_of_group>` in `mru_transform_interfaces/package.xml`); cause 11 (undeclared keys: `std_srvs`, `geographic_msgs`, `builtin_interfaces`, `rosidl_default_generators`, `ament_lint_auto`/`ament_lint_common`, `launch`, `launch_ros`, `lifecycle_msgs`), each confirmed by `rosdep` or a build before it is declared; causes 1 and 8 as one commit, with the `geodesy` include directory PUBLIC on the library; the corrected counts (three test files with removed tf2 headers; `cmake_minimum_required` 3.8 only in `mru_transform_interfaces`).
+- Not taken: removing the dead commented-out CMake text in `mru_transform_interfaces/CMakeLists.txt`. It is not a Rolling fix; by the owner's rule a port makes no changes it does not need.
+- Host decision, listed for the owner's veto: the undeclared ROS keys are declared in this port (manifest lines only, one commit per package), not deferred to a follow-up issue, because the new workflow's `rosdep install` without `-r` is the first check this repository has ever had of its manifests and they are needed for it to mean anything.
