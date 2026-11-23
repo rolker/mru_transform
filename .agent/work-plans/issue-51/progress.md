@@ -258,3 +258,30 @@ No non-test source changed: navigation code (position and orientation transforms
 - `./build.sh`: 2 packages finished. `ROS_DOMAIN_ID=143 ./test.sh`: `Summary: 97 tests, 0 errors, 0 failures, 0 skipped`.
 - `test_map_origin` 150 times as separate processes (domain 143): 0 failed.
 - Not verified here: the Jazzy build and tests of these three commits (CI on the pushed head is the only check).
+
+## Local Review
+**Status**: complete
+**When**: 2026-11-23 10:16 -05:00
+**By**: Claude Code Agent (claude-opus-5-5)
+**Dispatch**: resumed (agent a2f11c65de0e0135e, resume 1 of 3)
+**Verdict**: approved
+
+**PR**: #52 at `4b70556`
+**Depth**: Standard (reason: narrow check per handoff: round 1 had no must-fix, so the owner's standing rule gives a check of that review's three suggestions and the fix diff `a1ecb86..4b70556`; no cross-model reviewers)
+**Must-fix**: 0 | **Suggestions**: 0
+
+Checked: `git diff a1ecb86..4b70556 --stat` touches only `mru_transform/package.xml`, `mru_transform/test/test_map_origin.cpp`, `mru_transform_interfaces/{package.xml,CMakeLists.txt}` and the records; no non-test source of the navigation path. The three Local Review (Pre-Push) suggestions are resolved as asked:
+- `7fb49ec` geometry_msgs in the interfaces manifest, `find_package` and `DEPENDENCIES`. No consumer-visible change: geometry_msgs already reached consumers through geographic_msgs' exported dependencies and the generator targets' link interface; the fix pass's byte-identical `*Export.cmake` comparison is consistent with that; only the direct export-dependency list gains a name that was already found transitively.
+- `ddcc9f5` `<test_depend>rcutils</test_depend>`; CMake unchanged is right (`rclcpp::rclcpp` carries `rcutils::rcutils`).
+- `0783b0a` namespace `map_origin_test_<TestName>_<pid>`: a valid ROS name token (starts with a letter; gtest names are identifiers; digits only after `_`). Nothing else in the fixture used the fixed name: the listener test reads `node->get_namespace()` and the `reset_map_frame` client is relative to the node, so both follow the suffix.
+
+`--gtest_repeat` hang: not reproduced here at `4b70556`. In-process runs of test_map_origin passed: `--gtest_repeat=300` on the full binary (domain 63, 41 s, 300/300 PASSED 22 tests), and `--gtest_repeat=300` on the listener and reset tests on domains 63 and 87 (300/300 each). Nothing in `0783b0a` touches init/shutdown or process lifetime, so the change gives no mechanism for a hang. CI and `colcon test` run each gtest binary once (ctest, no repeat), so it does not matter for CI.
+
+CI on `4b70556` (run 45202593814, both jobs pass):
+- build-and-test (jazzy), pass, 3m10s: "#All required rosdeps installed successfully"; "Summary: 4 packages finished [1min 28s]"; "7: [       OK ] MapOriginNodeTest.TransformListenerSubscribesFromTheNodeItself (11 ms)"; "Summary: 97 tests, 0 errors, 0 failures, 0 skipped".
+- build-and-test (rolling), pass, 3m9s: "#All required rosdeps installed successfully"; "Summary: 4 packages finished [1min 19s]"; "7: [       OK ] MapOriginNodeTest.TransformListenerSubscribesFromTheNodeItself (9 ms)"; "Summary: 97 tests, 0 errors, 0 failures, 0 skipped".
+
+Re-ran locally (Rolling): `./build.sh` (2 packages finished) and `ROS_DOMAIN_ID=63 ./test.sh`: "Summary: 97 tests, 0 errors, 0 failures, 0 skipped".
+
+### Findings
+- [ ] No issues found. LGTM.
