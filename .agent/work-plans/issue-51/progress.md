@@ -123,3 +123,22 @@ The plan is sound and evidenced; the Rolling listener/broadcaster fix maps to th
 - [ ] Embed the workflow YAML in the plan or list `shell: bash`, the per-step ROS sourcing, `permissions` and `DEBIAN_FRONTEND`.
 - [ ] Add `<exec_depend>launch_xml</exec_depend>` to `mru_transform/package.xml` in step 6; list `launch/test_posmv.launch` (ROS 1) in the follow-up.
 - [ ] Correct step 8's reason about the `ros2` branch.
+
+## Checkpoint
+**Status**: complete
+**When**: 2026-11-23 09:28 -05:00
+**By**: Claude Code Agent (claude-fable-5-2)
+**Decided-by**: host (the Plan Review's verdict is needs-work on six findings, each with its resolution stated exactly and none changing scope; handing them to the implementer as binding corrections gives the same result as a plan revision without another plan and review round)
+**After**: plan
+**Decision**: proceed
+
+Read: `plan.md` at `de4e3c5` and the Plan Review of it (needs-work; six findings; the seven points the host asked about confirmed except the new test, partly wrong). The findings are binding corrections that override the plan where they differ:
+
+- F1 (medium): the new test's negative clause (no `transform_listener_impl*` node on `/tf`) is domain-wide and can fail because of another package's test on the same `ROS_DOMAIN_ID`. Keep the positive clause (a `/tf` subscription whose node is the node under test, in its own namespace); drop the negative clause or restrict it to what this process owns.
+- F2 (medium): the helper must take and forward `spin_thread = false`, as the original call did, and a test must fail if it is dropped (for example the buffer's `isUsingDedicatedThread()` staying false, or the node's callback-group count unchanged by the listener).
+- F3 (low): make the helper's listener type a template parameter and detect `typename ListenerT::RequiredInterfaces` with `std::void_t`, so both `if constexpr` branches are dependent.
+- F4 (low): the workflow needs `shell: bash` where `set -euo pipefail` is used, `bash -c 'source /opt/ros/<distro>/setup.bash && ...'` on the colcon steps, `permissions: contents: read`, and `DEBIAN_FRONTEND=noninteractive` on apt and rosdep, as the two model workflows have.
+- F5 (low): declare `launch_xml` as an `exec_depend` of `mru_transform` (it has an XML launch file); leave the ROS 1 file `launch/test_posmv.launch` and add it to the follow-up list.
+- F6 (low): the reason given for retiring `upstream.repos` is wrong (geographic_info's `ros2` branch equals `f70b81a` today); retire it for the true reasons (nothing reads it; a moving branch; one upstream pinned to `jazzy` for both distros).
+
+The planner's exception for `ament_lint_common` stands: the review found it sound (CMake never names it, so it is not an undeclared key).
