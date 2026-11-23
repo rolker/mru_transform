@@ -71,3 +71,11 @@ Read: the Issue Review of 51 (well-scoped, right repository, no design change). 
 - Taken into the plan: the existing CI scaffold (`upstream.repos`, `.agents/ci_local_upstream_extra.sh`) is either used by the new workflow or retired in the same change; cause 9 (`<test_depend>` after `<member_of_group>` in `mru_transform_interfaces/package.xml`); cause 11 (undeclared keys: `std_srvs`, `geographic_msgs`, `builtin_interfaces`, `rosidl_default_generators`, `ament_lint_auto`/`ament_lint_common`, `launch`, `launch_ros`, `lifecycle_msgs`), each confirmed by `rosdep` or a build before it is declared; causes 1 and 8 as one commit, with the `geodesy` include directory PUBLIC on the library; the corrected counts (three test files with removed tf2 headers; `cmake_minimum_required` 3.8 only in `mru_transform_interfaces`).
 - Not taken: removing the dead commented-out CMake text in `mru_transform_interfaces/CMakeLists.txt`. It is not a Rolling fix; by the owner's rule a port makes no changes it does not need.
 - Host decision, listed for the owner's veto: the undeclared ROS keys are declared in this port (manifest lines only, one commit per package), not deferred to a follow-up issue, because the new workflow's `rosdep install` without `-r` is the first check this repository has ever had of its manifests and they are needed for it to mean anything.
+
+## Plan Authored
+**Status**: complete
+**When**: 2026-11-23 09:22 -05:00
+**By**: Claude Code Agent (claude-sonnet-5-5)
+**Plan**: `.agent/work-plans/issue-51/plan.md` at `de4e3c5`
+
+Eight commits on `rolling`, planned from a Rolling baseline build and a scratch copy that builds and passes (97 tests, 0 failures, no intermittent failure in 100 to 300 runs per binary): geodesy CMake and 1.0.7 floor (causes 1, 8), tf2 `.hpp` includes (2), a new cause found by the build in the `tf2_ros` listener and broadcaster node constructors (with a mutation-checked test), manifest order (9), undeclared dependencies per package (11), the CI workflow, and retiring the old `upstream.repos` scaffold. Backport is the same eight commits by cherry-pick.
