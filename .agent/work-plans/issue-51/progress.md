@@ -217,9 +217,9 @@ CI, first run of the workflow (run 45199381330, both jobs at `a1ecb86`):
 Suggestion 1 checked against `rosidl_generate_interfaces.cmake` (Rolling): a DEPENDENCIES entry must be `_FOUND` (it is today only because geographic_msgs' config finds geometry_msgs transitively, which is also how `builtin_interfaces` works with no `find_package`). Adding it changes nothing a consumer sees: geometry_msgs is already in geographic_msgs' recursive interface dependencies and its exported dependencies, so the generated code, the typesupport link set and the exported CMake dependencies stay the same; only the manifest and the CMake become explicit.
 
 ### Findings
-- [ ] (suggestion, Local Review @ `3c5cd7d`) Declare `geometry_msgs` in mru_transform_interfaces: add `<depend>geometry_msgs</depend>` to `package.xml`, `find_package(geometry_msgs REQUIRED)` and `geometry_msgs` in `rosidl_generate_interfaces(... DEPENDENCIES ...)`; same on both distros, no change to generated interfaces or exports — `mru_transform_interfaces/package.xml:14`, `mru_transform_interfaces/CMakeLists.txt:22`
-- [ ] (suggestion, Local Review @ `3c5cd7d`) Add `<test_depend>rcutils</test_depend>`: test_map_origin includes `rcutils/logging.h` directly and gets it only through rclcpp (CI passes because rclcpp brings it) — `mru_transform/package.xml:36`, `mru_transform/test/test_map_origin.cpp:18`
-- [ ] (cross-confirmed: Local Review + Codex @ `3c5cd7d`) The per-test namespace in `make_node` is the same in every process, so two concurrent runs of test_map_origin on one host (domain 87, LOCALHOST) can let one run's subscriber satisfy the other's `found` check (a false pass), and can also cross-serve `reset_map_frame` calls between runs; append a per-process suffix (e.g. `"_" + std::to_string(getpid())` with `<unistd.h>`) to the namespace in `make_node`, which fixes every test in the fixture on both distros, or move it to the follow-up issue. CI is unaffected (jobs are isolated) — `mru_transform/test/test_map_origin.cpp:200`
+- [x] (suggestion, Local Review @ `3c5cd7d`) Declare `geometry_msgs` in mru_transform_interfaces: add `<depend>geometry_msgs</depend>` to `package.xml`, `find_package(geometry_msgs REQUIRED)` and `geometry_msgs` in `rosidl_generate_interfaces(... DEPENDENCIES ...)`; same on both distros, no change to generated interfaces or exports — `mru_transform_interfaces/package.xml:14`, `mru_transform_interfaces/CMakeLists.txt:22`
+- [x] (suggestion, Local Review @ `3c5cd7d`) Add `<test_depend>rcutils</test_depend>`: test_map_origin includes `rcutils/logging.h` directly and gets it only through rclcpp (CI passes because rclcpp brings it) — `mru_transform/package.xml:36`, `mru_transform/test/test_map_origin.cpp:18`
+- [x] (cross-confirmed: Local Review + Codex @ `3c5cd7d`) The per-test namespace in `make_node` is the same in every process, so two concurrent runs of test_map_origin on one host (domain 87, LOCALHOST) can let one run's subscriber satisfy the other's `found` check (a false pass), and can also cross-serve `reset_map_frame` calls between runs; append a per-process suffix (e.g. `"_" + std::to_string(getpid())` with `<unistd.h>`) to the namespace in `make_node`, which fixes every test in the fixture on both distros, or move it to the follow-up issue. CI is unaffected (jobs are isolated) — `mru_transform/test/test_map_origin.cpp:200`
 
 ### False positives
 - (Codex) Set `persist-credentials: false` on checkout — both jobs run with `permissions: contents: read` on a public repository, so the persisted token grants nothing anonymous access does not; the unpinned code fetched is the owner's own unh_marine_autonomy and geographic_info is pinned by SHA.
@@ -237,3 +237,24 @@ Suggestion 1 checked against `rosidl_generate_interfaces.cmake` (Rolling): a DEP
 **Decision**: address
 
 Read: the Integrated Review of pull request 52 at `a1ecb86`: three valid suggestions, four false positives, CI all-pass on the workflow's first run (Jazzy and Rolling each: 4 packages built, 97 tests, 0 errors, 0 failures; the new listener test passing on both; rosdep without `-r` satisfied). All three are addressed: (1) `geometry_msgs` declared in `mru_transform_interfaces` (`package.xml`, `find_package`, `rosidl_generate_interfaces` DEPENDENCIES); (2) `<test_depend>rcutils</test_depend>` in `mru_transform`; (3) a per-process suffix on the test namespace in `make_node` (`test/test_map_origin.cpp:200`), so two runs on one machine cannot answer each other.
+
+## Implementation
+**Status**: complete
+**When**: 2026-11-23 10:09 -05:00
+**By**: Claude Code Agent (claude-opus-5-5)
+
+**PR**: #52 at `0783b0a`
+**Addressed**: Integrated Review at `a1ecb86` (2026-11-23 09:59 -05:00)
+**Commits**: 7fb49ec, ddcc9f5, 0783b0a
+
+### Actions
+- [x] Declared `geometry_msgs` in mru_transform_interfaces (manifest `<depend>`, `find_package`, `DEPENDENCIES`) in 7fb49ec — `mru_transform_interfaces/package.xml:16`, `mru_transform_interfaces/CMakeLists.txt:11,26`. All four srv files use `geometry_msgs/PointStamped` (the finding said three). Installed CMake exports compared before and after: every `*Export.cmake` target file is byte-identical (the generator targets' `INTERFACE_LINK_LIBRARIES` already carried `geometry_msgs::*` through `geographic_msgs`); the only difference is `ament_cmake_export_dependencies-extras.cmake`, whose direct list gains `geometry_msgs` after `geographic_msgs`. Consumers already reached `geometry_msgs` there, since `geographic_msgs` exports it, so the set they find is unchanged.
+- [x] Added `<test_depend>rcutils</test_depend>` in ddcc9f5, manifest only — `mru_transform/package.xml:37`. CMake was left unchanged on purpose: `rclcpp::rclcpp`'s exported `INTERFACE_LINK_LIBRARIES` carries `rcutils::rcutils`, and rclcpp's public headers include rcutils, so the link cannot go away without breaking rclcpp itself.
+- [x] Per-process namespace suffix `"_" + std::to_string(getpid())` (`<unistd.h>`) in `make_node`, plus the matching comment on the listener test, in 0783b0a — `mru_transform/test/test_map_origin.cpp:200`. Concurrent runs on one domain (143, LOCALHOST): 30 pairs and 25 rounds of 4 processes, 0 failures. Mutation check (scratch copy, listener built `std::make_shared<tf2_ros::TransformListener>(*tf_buffer_, node_.get())`, `ldd` showed the scratch `libmru_transform.so`): the new test fails ("no /tf subscription ... subscribers seen: //transform_listener_impl_..."). With a decoy node `mru_transform` subscribed to `/tf` in the old, un-suffixed namespace, the old test falsely passed against the mutated library (230 ms) and the new test still failed. Scratch removed; the real tree was never mutated.
+
+No non-test source changed: navigation code (position and orientation transforms) untouched.
+
+### Verification (Rolling only; Jazzy is CI's)
+- `./build.sh`: 2 packages finished. `ROS_DOMAIN_ID=143 ./test.sh`: `Summary: 97 tests, 0 errors, 0 failures, 0 skipped`.
+- `test_map_origin` 150 times as separate processes (domain 143): 0 failed.
+- Not verified here: the Jazzy build and tests of these three commits (CI on the pushed head is the only check).
