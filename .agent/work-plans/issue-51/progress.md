@@ -285,3 +285,30 @@ Re-ran locally (Rolling): `./build.sh` (2 packages finished) and `ROS_DOMAIN_ID=
 
 ### Findings
 - [ ] No issues found. LGTM.
+
+## Integrated Review
+**Status**: complete
+**When**: 2026-11-23 10:18 -05:00
+**By**: Claude Code Agent (claude-opus-5-5)
+**Dispatch**: resumed (agent abdf1f6413a235c9e, resume 1 of 3)
+
+**PR**: #52 at `4b70556`
+**Sources**: 2 (Local Review @ `4b70556`, CI rollup run 45202593814); GitHub: 0 reviews, 0 inline comments, 0 conversation comments, no Copilot; no Gemini or Codex this round (owner's review-depth rule)
+**Cross-source confirmations**: 0
+**CI**: all-pass
+
+Prior round: the Integrated Review at `a1ecb86` had three open suggestions. `review_progress.sh sources` at `4b70556` lists the Local Review (Pre-Push) @ `3c5cd7d` as stale (code changed) and no open local finding. I checked the fix diff `a1ecb86..4b70556` against each suggestion:
+- (1) `7fb49ec`: `find_package(geometry_msgs REQUIRED)` and `geometry_msgs` in `DEPENDENCIES` (`mru_transform_interfaces/CMakeLists.txt:11,26`), plus `<depend>geometry_msgs</depend>` in the manifest. Resolved.
+- (2) `ddcc9f5`: `<test_depend>rcutils</test_depend>` (`mru_transform/package.xml:37`). Resolved; CMake unchanged is correct (`rclcpp::rclcpp` carries `rcutils::rcutils`).
+- (3) `0783b0a`: `make_node` namespace is now `map_origin_test_<TestName>_<pid>` (`mru_transform/test/test_map_origin.cpp:200-207`, `<unistd.h>` added). Resolved for both the `/tf` graph check and `reset_map_frame` calls, which are relative to the node.
+No non-test source changed. The Local Review @ `4b70556` (approved, 0 must-fix, 0 suggestions) agrees.
+
+CI on `4b70556` (run 45202593814):
+- `build-and-test (jazzy)`: pass. "#All required rosdeps installed successfully"; "Summary: 4 packages finished [1min 28s]"; "7: [       OK ] MapOriginNodeTest.TransformListenerSubscribesFromTheNodeItself (11 ms)"; "Summary: 97 tests, 0 errors, 0 failures, 0 skipped".
+- `build-and-test (rolling)`: pass. "#All required rosdeps installed successfully"; "Summary: 4 packages finished [1min 19s]"; "7: [       OK ] MapOriginNodeTest.TransformListenerSubscribesFromTheNodeItself (9 ms)"; "Summary: 97 tests, 0 errors, 0 failures, 0 skipped".
+
+### Findings
+- [x] Nothing open: all three suggestions from the `a1ecb86` round are resolved at `4b70556`, and no new findings.
+
+### False positives
+- None new this round; the four from the `a1ecb86` round stand.
