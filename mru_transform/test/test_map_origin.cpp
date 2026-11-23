@@ -13,6 +13,8 @@
 #include <thread>
 #include <vector>
 
+#include <unistd.h>
+
 #include <gtest/gtest.h>
 #include <rclcpp/rclcpp.hpp>
 #include <rcutils/logging.h>
@@ -189,15 +191,19 @@ protected:
     rclcpp::shutdown();
   }
 
-  // Constructs a node (own namespace per test) with parameter overrides. The
-  // far-from-origin WARN throttle is per instance, so tests are independent.
+  // Constructs a node (own namespace per test and per process) with parameter
+  // overrides. The far-from-origin WARN throttle is per instance, so tests are
+  // independent; the pid suffix keeps two concurrent runs on one host from
+  // answering each other's graph checks or reset_map_frame calls.
   rclcpp::Node::SharedPtr make_node(std::vector<rclcpp::Parameter> overrides)
   {
     const auto * info = ::testing::UnitTest::GetInstance()->current_test_info();
     rclcpp::NodeOptions options;
     options.parameter_overrides(overrides);
     node_ = std::make_shared<rclcpp::Node>(
-      "mru_transform", std::string("map_origin_test_") + info->name(), options);
+      "mru_transform",
+      std::string("map_origin_test_") + info->name() + "_" + std::to_string(getpid()),
+      options);
     return node_;
   }
 
@@ -500,9 +506,9 @@ TEST_F(MapOriginNodeTest, FarFixLogsOneWarnAndStillPublishesTheTransform)
 // silently selects the simplified constructor (the pointer becomes
 // spin_thread = true), which creates a hidden node of its own; leaving out
 // spin_thread = false keeps the node but adds a callback group and executor
-// thread. Only this test's own node (its per-test namespace) and its own
-// callback groups are looked at, so other processes on the domain cannot
-// affect the result.
+// thread. Only this test's own node (its per-test, per-process namespace)
+// and its own callback groups are looked at, so other processes on the
+// domain cannot affect the result.
 TEST_F(MapOriginNodeTest, TransformListenerSubscribesFromTheNodeItself)
 {
   auto node = make_node({});
