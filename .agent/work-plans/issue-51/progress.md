@@ -142,3 +142,28 @@ Read: `plan.md` at `de4e3c5` and the Plan Review of it (needs-work; six findings
 - F6 (low): the reason given for retiring `upstream.repos` is wrong (geographic_info's `ros2` branch equals `f70b81a` today); retire it for the true reasons (nothing reads it; a moving branch; one upstream pinned to `jazzy` for both distros).
 
 The planner's exception for `ament_lint_common` stands: the review found it sound (CMake never names it, so it is not an undeclared key).
+
+## Implementation
+**Status**: complete
+**When**: 2026-11-23 09:46 -05:00
+**By**: Claude Code Agent (claude-opus-5-5)
+**Branch**: feature/issue-51 at `4fab763`
+
+The plan at `de4e3c5` (eight steps), with the Plan Review's corrections F1 to F6 applied. One fix per commit, in backport order:
+
+1. `fbb003e` geodesy: `ament_target_dependencies` (4 calls) replaced by `${geodesy_INCLUDE_DIRS}` / `${geodesy_LIBRARIES}` (library include PUBLIC, library in its plain link list; the other three PRIVATE); `find_package(geodesy 1.0.7)` and `<depend version_gte="1.0.7">` (#415 causes 1, 8). Behaviour: none; the same include directories and the same `geoconv` library reach the same targets.
+2. `12541ed` tf2 `.h` to `.hpp`, 14 includes in 8 files (#415 cause 2). Behaviour: none; Jazzy's `.h` forward to the `.hpp`.
+3. `dab9463` tf2_ros constructors (new #415 cause, 14): `TransformBroadcaster(*node_)`; `makeTransformListener<ListenerT>` selects `*node` when `ListenerT::RequiredInterfaces` exists (`std::void_t`, both branches dependent) and the `shared_ptr` otherwise, forwarding `spin_thread = false`. New test `TransformListenerSubscribesFromTheNodeItself` in `test_map_origin`: a `/tf` subscription from the node under test (per-test namespace; no domain-wide clause, F1), and no callback group added by the listener (F2). **The one change to executable behaviour**; intended to be identical (same node, default QoS and override parameters, no spin thread, same buffer clock), protected by that test.
+4. `89e3030` `member_of_group` after `test_depend` in `mru_transform_interfaces/package.xml` (#415 cause 9); `ament_xmllint` now valid. Behaviour: none.
+5. `3821227` interfaces manifest: `rosidl_default_generators` (buildtool), `builtin_interfaces`, `geographic_msgs` (#415 cause 11). Behaviour: none.
+6. `639dd93` mru_transform manifest: `std_srvs`, exec `launch`, `launch_ros`, `launch_xml` (F5), test `ament_lint_auto`; `ament_lint_common` deliberately not declared (#415 cause 11). Behaviour: none.
+7. `4252c64` `.github/workflows/ci.yml`: Jazzy and Rolling jobs, geodesy at `f70b81a`, sparse `marine_vertical_datum`, paths-only rosdep without `-r`, `shell: bash`, per-step ROS sourcing, `permissions: contents: read`, `DEBIAN_FRONTEND` (F4).
+8. `4fab763` retire `upstream.repos` and `.agents/ci_local_upstream_extra.sh`, for the true reasons (F6).
+
+Verification (Rolling only, this machine):
+- Clean `./build.sh`: 2 packages finished, 0 errors (warnings only the known, listed ones). `./test.sh` (`ROS_DOMAIN_ID=42` inherited; the two node tests set 87 and 89 in CMake): `Summary: 97 tests, 0 errors, 0 failures, 0 skipped`.
+- Rolling CI rehearsal (scratch workspace laid out as the job, `env -i`, only `/opt/ros/rolling` sourced, the job's commands, rosdep `--simulate`): colcon list gives geodesy, mru_transform, mru_transform_interfaces, marine_vertical_datum; build 4 packages finished; `Summary: 97 tests, 0 errors, 0 failures, 0 skipped`.
+- Mutations on a scratch copy (ldd confirmed the scratch `libmru_transform.so`): (a) `node_.get()`: the new test fails ("no /tf subscription from /map_origin_test_.../mru_transform; subscribers seen: //transform_listener_impl_57ba169c8ee0"), and the full binary segfaults at teardown of the other node tests; (b) `spin_thread` dropped: the new test fails on the callback-group count (2 vs 1), full binary also segfaults. Restored: 22/22 pass.
+- Repeat runs, separate processes, 0 failures: twist_rotation, water_line_offset, water_line_lever_arm, nav_source_selection 300 each (domains 42 to 45); subscribe_once 100 (46); map_origin 150 (87, its own); lifecycle_reconfigure 100 (89, its own).
+
+Not done: no Jazzy build or test (not installed here; the PR's Jazzy CI job is the first evidence, in particular for the helper's Jazzy branch and the new test); the workflow itself has not run; no vehicle run, bag replay or simulation.
