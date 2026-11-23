@@ -15,7 +15,7 @@
 #include <gtest/gtest.h>
 #include <geometry_msgs/msg/transform_stamped.hpp>
 #include <rclcpp/clock.hpp>
-#include <tf2/LinearMath/Vector3.h>
+#include <tf2/LinearMath/Vector3.hpp>
 #include <tf2_ros/buffer.h>
 
 #include "mru_transform/water_line_lever_arm.hpp"

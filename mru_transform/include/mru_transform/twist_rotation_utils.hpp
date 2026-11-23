@@ -2,7 +2,7 @@
 #define MRU_TRANSFORM_TWIST_ROTATION_UTILS_HPP
 
 #include <array>
-#include <tf2/LinearMath/Matrix3x3.h>
+#include <tf2/LinearMath/Matrix3x3.hpp>
 
 namespace mru_transform
 {
