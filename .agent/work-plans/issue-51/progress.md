@@ -312,3 +312,15 @@ CI on `4b70556` (run 45202593814):
 
 ### False positives
 - None new this round; the four from the `a1ecb86` round stand.
+
+## Checkpoint
+**Status**: complete
+**When**: 2026-11-23 10:23 -05:00
+**By**: Claude Code Agent (claude-fable-5-2)
+**Decided-by**: owner
+**After**: merge
+**Decision**: merge
+
+Asked "Merge pull request 52 into `rolling`?" with what merges, that the listener fix is the one change to running code and what it guards against, CI at `4b70556` (Jazzy and Rolling each: 4 packages, 97 tests, 0 failures, the new listener test passing on both, no dependency missing in the containers), the local checks (97 tests; 100 to 300 repeat runs per binary; two mutation checks), the review history (nothing open), and that no vehicle run, bag replay or simulation was done and one comparing transforms against the Jazzy build is owed before a Rolling deployment. The owner answered: "Merge (Recommended)".
+
+In the same dialog he approved a comment on rolker/unh_marine_autonomy#415 adding cause 14 ("Post it (Recommended)"), a follow-up issue in this repository for what the port left alone ("Open it (Recommended)"), and the `jazzy` backport pull request right after the merge ("Yes, backport right after (Recommended)"); the backport's own merge and the closing of issue 51 are still asked of him.
