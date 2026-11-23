@@ -8,6 +8,7 @@ find_package(ament_cmake REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 
 find_package(geographic_msgs REQUIRED)
+find_package(geometry_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 
 set(MSG_FILES
@@ -22,6 +23,7 @@ rosidl_generate_interfaces(
     DEPENDENCIES
     builtin_interfaces
     geographic_msgs
+    geometry_msgs
     std_msgs
 )
 

@@ -13,6 +13,8 @@
 #include <thread>
 #include <vector>
 
+#include <unistd.h>
+
 #include <gtest/gtest.h>
 #include <rclcpp/rclcpp.hpp>
 #include <rcutils/logging.h>
@@ -189,15 +191,19 @@ protected:
     rclcpp::shutdown();
   }
 
-  // Constructs a node (own namespace per test) with parameter overrides. The
-  // far-from-origin WARN throttle is per instance, so tests are independent.
+  // Constructs a node (own namespace per test and per process) with parameter
+  // overrides. The far-from-origin WARN throttle is per instance, so tests are
+  // independent; the pid suffix keeps two concurrent runs on one host from
+  // answering each other's graph checks or reset_map_frame calls.
   rclcpp::Node::SharedPtr make_node(std::vector<rclcpp::Parameter> overrides)
   {
     const auto * info = ::testing::UnitTest::GetInstance()->current_test_info();
     rclcpp::NodeOptions options;
     options.parameter_overrides(overrides);
     node_ = std::make_shared<rclcpp::Node>(
-      "mru_transform", std::string("map_origin_test_") + info->name(), options);
+      "mru_transform",
+      std::string("map_origin_test_") + info->name() + "_" + std::to_string(getpid()),
+      options);
     return node_;
   }
 
@@ -492,6 +498,57 @@ TEST_F(MapOriginNodeTest, FarFixLogsOneWarnAndStillPublishesTheTransform)
     }();
   EXPECT_NE(text.find("reset_map_frame"), std::string::npos) << text;
   EXPECT_EQ(text.find("http"), std::string::npos) << text;
+}
+
+// #51 (rolker/unh_marine_autonomy#415 cause 14): the TransformListener must
+// subscribe to /tf from the node it is given, without a spin thread of its
+// own. On Rolling, constructing it with a raw node pointer compiles and
+// silently selects the simplified constructor (the pointer becomes
+// spin_thread = true), which creates a hidden node of its own; leaving out
+// spin_thread = false keeps the node but adds a callback group and executor
+// thread. Only this test's own node (its per-test, per-process namespace)
+// and its own callback groups are looked at, so other processes on the
+// domain cannot affect the result.
+TEST_F(MapOriginNodeTest, TransformListenerSubscribesFromTheNodeItself)
+{
+  auto node = make_node({});
+  const auto count_groups = [&node] {
+      size_t groups = 0;
+      node->get_node_base_interface()->for_each_callback_group(
+        [&groups](rclcpp::CallbackGroup::SharedPtr) {++groups;});
+      return groups;
+    };
+  const size_t groups_before = count_groups();
+
+  mru_transform::MRUTransform mru(node);
+
+  // A dedicated listener thread would come with a callback group of its own.
+  EXPECT_EQ(count_groups(), groups_before)
+    << "the TransformListener added a callback group: spin_thread was not false";
+
+  const std::string name = node->get_name();
+  const std::string ns = node->get_namespace();
+  bool found = false;
+  std::vector<std::string> seen;
+  const auto deadline = std::chrono::steady_clock::now() + 10s;
+  while (!found && std::chrono::steady_clock::now() < deadline) {
+    seen.clear();
+    for (const auto & info : node->get_subscriptions_info_by_topic("/tf")) {
+      seen.push_back(info.node_namespace() + "/" + info.node_name());
+      if (info.node_name() == name && info.node_namespace() == ns) {
+        found = true;
+      }
+    }
+    if (!found) {
+      std::this_thread::sleep_for(50ms);
+    }
+  }
+  std::string seen_text;
+  for (const auto & s : seen) {
+    seen_text += " " + s;
+  }
+  EXPECT_TRUE(found) << "no /tf subscription from " << ns << "/" << name
+                     << "; subscribers seen:" << seen_text;
 }
 
 int main(int argc, char ** argv)
