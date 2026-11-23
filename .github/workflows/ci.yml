@@ -1,0 +1,218 @@
+# CI for mru_transform. The same file is carried on the rolling and jazzy
+# branches; pushes and pull requests to either run it.
+#
+# Both jobs build and test mru_transform_interfaces and mru_transform. Their
+# workspace is this checkout plus two source dependencies that are not
+# rosdep keys:
+#
+# - geodesy, from geographic_info cloned at commit f70b81a, which is tag
+#   1.0.7 plus the one upstream fix after it ("Adding missing include for
+#   setprecision", #64): at the tag, ecef.h uses std::setprecision without
+#   <iomanip> and geodesy does not compile. mru_transform needs 1.0.7 for
+#   geodesy/ecef.h and geodesy/geodesics.h; Jazzy's released geodesy is 1.0.6
+#   and has neither, and Rolling has no installable geodesy. The commit is
+#   pinned by SHA, not by a branch or a mutable tag. COLCON_IGNORE in the
+#   clone's geographic_msgs and geographic_info folders leaves only geodesy
+#   visible to colcon and rosdep, so the released geographic_msgs is used.
+#   geodesy's own tests are built (the one build step covers it) but not run.
+#   Drop the clone once a geographic_info release newer than 1.0.7 reaches
+#   both distros' apt.
+# - marine_vertical_datum (chart_datum_node's vertical-datum library), from a
+#   sparse clone of rolker/unh_marine_autonomy that checks out that one
+#   package folder, so colcon sees one package from that repository. The
+#   branch matches the job's distro (jazzy or rolling), not a pinned commit:
+#   accepted, as in unh_marine_autonomy's own CI.
+#
+# rosdep is given only the paths of the build step's --packages-up-to
+# closure, taken from colcon list, with no -r: a key that does not install
+# fails the job. The test step does not source install/setup.bash: colcon
+# test gives each package the environment of its declared workspace
+# dependencies only, so a missing workspace test_depend fails here instead of
+# being hidden by the whole overlay.
+#
+# test_map_origin and test_lifecycle_reconfigure set their own ROS_DOMAIN_ID
+# and LOCALHOST discovery in CMake.
+#
+# Job "rolling" is skipped for pull requests to and pushes on jazzy
+# (github.base_ref is the target branch of a pull request; github.ref_name is
+# the pushed branch), so on the jazzy branch this file runs the jazzy job
+# only.
+
+name: CI
+
+on:
+  push:
+    branches: [rolling, jazzy]
+  pull_request:
+    branches: [rolling, jazzy]
+
+jobs:
+  jazzy:
+    name: build-and-test (jazzy)
+    # The container supplies the distro's OS; the host runner only runs it.
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    container:
+      image: ros:jazzy-ros-core
+
+    steps:
+      - name: Update apt
+        run: apt-get update
+
+      - name: Install ros dev tools
+        run: DEBIAN_FRONTEND=noninteractive apt-get -y install ros-dev-tools git
+
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Init rosdep
+        run: |
+          if [ ! -f /etc/ros/rosdep/sources.list.d/20-default.list ]; then
+            rosdep init
+          fi
+
+      - name: Update rosdep
+        run: rosdep update
+
+      - name: Create workspace
+        run: mkdir -p ../ws/src && ln -s "$GITHUB_WORKSPACE" ../ws/src/mru_transform
+
+      - name: Clone geographic_info at f70b81a for geodesy
+        working-directory: ../ws
+        run: |
+          git init src/geographic_info
+          cd src/geographic_info
+          git remote add origin https://github.com/ros-geographic-info/geographic_info.git
+          git fetch --depth 1 origin f70b81a438172cd7a066dc1b18314d70e0eb6389
+          git checkout FETCH_HEAD
+
+      - name: Build only geodesy from the geographic_info clone
+        working-directory: ../ws/src/geographic_info
+        run: touch geographic_msgs/COLCON_IGNORE geographic_info/COLCON_IGNORE
+
+      - name: Sparse clone of unh_marine_autonomy (jazzy) for marine_vertical_datum
+        working-directory: ../ws
+        run: |
+          git clone --depth 1 --filter=blob:none --sparse -b jazzy https://github.com/rolker/unh_marine_autonomy.git src/unh_marine_autonomy
+          git -C src/unh_marine_autonomy sparse-checkout set marine_vertical_datum
+
+      - name: Install ROS dependencies
+        working-directory: ../ws
+        shell: bash
+        run: |
+          set -euo pipefail
+          paths="$(colcon list --base-paths src --paths-only --packages-up-to mru_transform_interfaces mru_transform)"
+          if [ -z "$paths" ]; then
+            echo "colcon list returned no package paths" >&2
+            exit 1
+          fi
+          echo "$paths"
+          # shellcheck disable=SC2086
+          DEBIAN_FRONTEND=noninteractive rosdep install --ignore-src -y --from-paths $paths
+
+      - name: Build
+        working-directory: ../ws
+        run: >
+          bash -c 'source /opt/ros/jazzy/setup.bash &&
+          colcon build --packages-up-to mru_transform_interfaces mru_transform'
+
+      - name: Test
+        working-directory: ../ws
+        run: >
+          bash -c 'source /opt/ros/jazzy/setup.bash &&
+          colcon test --packages-select mru_transform_interfaces mru_transform
+          --event-handlers console_direct+
+          --return-code-on-test-failure'
+
+      - name: Test results
+        working-directory: ../ws
+        run: >
+          bash -c 'source /opt/ros/jazzy/setup.bash &&
+          colcon test-result --verbose'
+        if: always()
+
+  rolling:
+    name: build-and-test (rolling)
+    if: (github.base_ref || github.ref_name) != 'jazzy'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    container:
+      image: ros:rolling-ros-core
+
+    steps:
+      - name: Update apt
+        run: apt-get update
+
+      - name: Install ros dev tools
+        run: DEBIAN_FRONTEND=noninteractive apt-get -y install ros-dev-tools git
+
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Init rosdep
+        run: |
+          if [ ! -f /etc/ros/rosdep/sources.list.d/20-default.list ]; then
+            rosdep init
+          fi
+
+      - name: Update rosdep
+        run: rosdep update
+
+      - name: Create workspace
+        run: mkdir -p ../ws/src && ln -s "$GITHUB_WORKSPACE" ../ws/src/mru_transform
+
+      - name: Clone geographic_info at f70b81a for geodesy
+        working-directory: ../ws
+        run: |
+          git init src/geographic_info
+          cd src/geographic_info
+          git remote add origin https://github.com/ros-geographic-info/geographic_info.git
+          git fetch --depth 1 origin f70b81a438172cd7a066dc1b18314d70e0eb6389
+          git checkout FETCH_HEAD
+
+      - name: Build only geodesy from the geographic_info clone
+        working-directory: ../ws/src/geographic_info
+        run: touch geographic_msgs/COLCON_IGNORE geographic_info/COLCON_IGNORE
+
+      - name: Sparse clone of unh_marine_autonomy (rolling) for marine_vertical_datum
+        working-directory: ../ws
+        run: |
+          git clone --depth 1 --filter=blob:none --sparse -b rolling https://github.com/rolker/unh_marine_autonomy.git src/unh_marine_autonomy
+          git -C src/unh_marine_autonomy sparse-checkout set marine_vertical_datum
+
+      - name: Install ROS dependencies
+        working-directory: ../ws
+        shell: bash
+        run: |
+          set -euo pipefail
+          paths="$(colcon list --base-paths src --paths-only --packages-up-to mru_transform_interfaces mru_transform)"
+          if [ -z "$paths" ]; then
+            echo "colcon list returned no package paths" >&2
+            exit 1
+          fi
+          echo "$paths"
+          # shellcheck disable=SC2086
+          DEBIAN_FRONTEND=noninteractive rosdep install --ignore-src -y --from-paths $paths
+
+      - name: Build
+        working-directory: ../ws
+        run: >
+          bash -c 'source /opt/ros/rolling/setup.bash &&
+          colcon build --packages-up-to mru_transform_interfaces mru_transform'
+
+      - name: Test
+        working-directory: ../ws
+        run: >
+          bash -c 'source /opt/ros/rolling/setup.bash &&
+          colcon test --packages-select mru_transform_interfaces mru_transform
+          --event-handlers console_direct+
+          --return-code-on-test-failure'
+
+      - name: Test results
+        working-directory: ../ws
+        run: >
+          bash -c 'source /opt/ros/rolling/setup.bash &&
+          colcon test-result --verbose'
+        if: always()

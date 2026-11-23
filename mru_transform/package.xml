@@ -10,7 +10,7 @@
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
-  <depend>geodesy</depend>
+  <depend version_gte="1.0.7">geodesy</depend>
   <depend>mru_transform_interfaces</depend>
   <depend>nav_msgs</depend>
   <depend>rclcpp</depend>
@@ -24,10 +24,17 @@
   <depend>tf2_msgs</depend>
   <depend>tf2_ros</depend>
   <depend>std_msgs</depend>
+  <depend>std_srvs</depend>
 
   <depend>marine_vertical_datum</depend>
 
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>launch_xml</exec_depend>
+
   <test_depend>ament_cmake_gtest</test_depend>
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>rcutils</test_depend>
 
   <!-- The export tag contains other, unspecified, tags -->
   <export>

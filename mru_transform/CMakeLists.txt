@@ -9,7 +9,11 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 endif()
 
 find_package(ament_cmake REQUIRED)
-find_package(geodesy REQUIRED)
+# 1.0.7 first has geodesy/ecef.h (map_frame.hpp, chart_datum_node.hpp) and
+# geodesy/geodesics.h (nav_sat_fix_to_velocity.hpp). The floor is necessary,
+# not sufficient: the 1.0.7 tag itself needs upstream #64 (f70b81a, still
+# versioned 1.0.7) to compile, which no version check can tell apart.
+find_package(geodesy 1.0.7 REQUIRED)
 find_package(geographic_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(lifecycle_msgs REQUIRED)
@@ -50,6 +54,9 @@ target_include_directories(${PROJECT_NAME}
   PUBLIC
     "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
     "$<INSTALL_INTERFACE:include/${PROJECT_NAME}>"
+    # PUBLIC: map_frame.hpp and nodes/chart_datum_node.hpp include
+    # geodesy/ecef.h.
+    ${geodesy_INCLUDE_DIRS}
 )
 
 target_link_libraries(${PROJECT_NAME}
@@ -63,10 +70,7 @@ target_link_libraries(${PROJECT_NAME}
   tf2::tf2
   ${tf2_geometry_msgs_TARGETS}
   tf2_ros::tf2_ros
-)
-
-ament_target_dependencies(${PROJECT_NAME}
-  geodesy
+  ${geodesy_LIBRARIES}
 )
 
 install(
@@ -161,10 +165,10 @@ target_link_libraries(nav_sat_fix_to_velocity
   rclcpp_lifecycle::rclcpp_lifecycle
   ${geographic_msgs_TARGETS}
   ${sensor_msgs_TARGETS}
+  ${geodesy_LIBRARIES}
 )
-
-ament_target_dependencies(nav_sat_fix_to_velocity
-  geodesy
+target_include_directories(nav_sat_fix_to_velocity PRIVATE
+  ${geodesy_INCLUDE_DIRS}
 )
 
 install(TARGETS nav_sat_fix_to_velocity
@@ -215,10 +219,10 @@ target_link_libraries(chart_datum_node
 # here already does.
 target_include_directories(chart_datum_node PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}/include"
+  ${geodesy_INCLUDE_DIRS}
 )
-
-ament_target_dependencies(chart_datum_node
-  geodesy
+target_link_libraries(chart_datum_node
+  ${geodesy_LIBRARIES}
 )
 
 install(TARGETS chart_datum_node
@@ -314,12 +318,11 @@ if(BUILD_TESTING)
     ${tf2_msgs_TARGETS}
     tf2::tf2
     tf2_ros::tf2_ros
-  )
-  ament_target_dependencies(test_lifecycle_reconfigure
-    geodesy
+    ${geodesy_LIBRARIES}
   )
   target_include_directories(test_lifecycle_reconfigure PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
+    ${geodesy_INCLUDE_DIRS}
   )
   # The live pub/sub cases in this test prove negatives ("an inactive node
   # published nothing"), so unrelated ROS traffic on the machine could break
