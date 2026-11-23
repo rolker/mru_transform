@@ -198,3 +198,32 @@ Not findings, by checking: `ament_target_dependencies` on Jazzy (ament_cmake `ja
 **Decision**: publish
 
 Read: the Local Review (Pre-Push) at `3c5cd7d`, verdict approved, ship recommended, three suggestions open: declare `geometry_msgs` in `mru_transform_interfaces` (`package.xml:14`, `CMakeLists.txt:22`); declare `<test_depend>rcutils</test_depend>` in `mru_transform` (`package.xml:36`); the new test's per-test namespace is the same in every process, so two concurrent runs on one machine could give a false pass (`test/test_map_origin.cpp:200`). They stay open and go through triage after publish, so the first CI run starts now. This is a project issue, so the host runs no full pre-commit pass. The pull request says `Part of #51`.
+
+## Integrated Review
+**Status**: complete
+**When**: 2026-11-23 09:59 -05:00
+**By**: Claude Code Agent (claude-opus-5-5)
+
+**PR**: #52 at `a1ecb86`
+**Sources**: 4 (Local Review (Pre-Push) @ `3c5cd7d` (covers `a1ecb86` via bookkeeping), Gemini and Codex in that round @ `3c5cd7d`, CI rollup run 45199381330); GitHub: 0 reviews, 0 inline comments, 0 conversation comments, no Copilot
+**Cross-source confirmations**: 1
+**CI**: all-pass
+
+CI, first run of the workflow (run 45199381330, both jobs at `a1ecb86`):
+- `build-and-test (jazzy)`: pass. rosdep "#All required rosdeps installed successfully" (no system key missing from the closure); build "Summary: 4 packages finished [1min 1s]" (geodesy, marine_vertical_datum, mru_transform_interfaces, mru_transform); test "Summary: 97 tests, 0 errors, 0 failures, 0 skipped". The helper's Jazzy branch compiles under GCC 13, and the new test passes: "7: [       OK ] MapOriginNodeTest.TransformListenerSubscribesFromTheNodeItself (6 ms)". Only compiler warnings are geodesy's own `geodesics.h:234` -Wparentheses.
+- `build-and-test (rolling)`: pass. Same rosdep line; "Summary: 4 packages finished [1min 3s]"; "Summary: 97 tests, 0 errors, 0 failures, 0 skipped"; the same new-test OK line. Warnings: the deprecated `tf2_ros/*.h` header `#warning`s (owner-settled, follow-up issue) and the geodesy one.
+- `[ERROR]` log lines in both test logs are the expected output of negative tests (TF_NAN_INPUT, rejected buffer durations), not failures.
+
+Suggestion 1 checked against `rosidl_generate_interfaces.cmake` (Rolling): a DEPENDENCIES entry must be `_FOUND` (it is today only because geographic_msgs' config finds geometry_msgs transitively, which is also how `builtin_interfaces` works with no `find_package`). Adding it changes nothing a consumer sees: geometry_msgs is already in geographic_msgs' recursive interface dependencies and its exported dependencies, so the generated code, the typesupport link set and the exported CMake dependencies stay the same; only the manifest and the CMake become explicit.
+
+### Findings
+- [ ] (suggestion, Local Review @ `3c5cd7d`) Declare `geometry_msgs` in mru_transform_interfaces: add `<depend>geometry_msgs</depend>` to `package.xml`, `find_package(geometry_msgs REQUIRED)` and `geometry_msgs` in `rosidl_generate_interfaces(... DEPENDENCIES ...)`; same on both distros, no change to generated interfaces or exports — `mru_transform_interfaces/package.xml:14`, `mru_transform_interfaces/CMakeLists.txt:22`
+- [ ] (suggestion, Local Review @ `3c5cd7d`) Add `<test_depend>rcutils</test_depend>`: test_map_origin includes `rcutils/logging.h` directly and gets it only through rclcpp (CI passes because rclcpp brings it) — `mru_transform/package.xml:36`, `mru_transform/test/test_map_origin.cpp:18`
+- [ ] (cross-confirmed: Local Review + Codex @ `3c5cd7d`) The per-test namespace in `make_node` is the same in every process, so two concurrent runs of test_map_origin on one host (domain 87, LOCALHOST) can let one run's subscriber satisfy the other's `found` check (a false pass), and can also cross-serve `reset_map_frame` calls between runs; append a per-process suffix (e.g. `"_" + std::to_string(getpid())` with `<unistd.h>`) to the namespace in `make_node`, which fixes every test in the fixture on both distros, or move it to the follow-up issue. CI is unaffected (jobs are isolated) — `mru_transform/test/test_map_origin.cpp:200`
+
+### False positives
+- (Codex) Set `persist-credentials: false` on checkout — both jobs run with `permissions: contents: read` on a public repository, so the persisted token grants nothing anonymous access does not; the unpinned code fetched is the owner's own unh_marine_autonomy and geographic_info is pinned by SHA.
+- (Gemini) Guard the sparse checkout of marine_vertical_datum with a `package.xml` check — if the folder vanished, colcon would not list it and `rosdep install` without `-r` fails on the unresolved `marine_vertical_datum` key, so the job still fails loudly at the dependency step; it cannot pass silently.
+- (Gemini) `Test results` with `if: always()` errors when `../ws` is missing — that happens only when an earlier step already failed the job, so it adds a second red step but never changes the verdict.
+- (Gemini) Unquoted `$paths` and `actions/checkout@v6` by major tag — colcon paths in the container are fixed, space-free `src/...` paths, and the GitHub-owned checkout action by major tag matches the marine_ais and unh_marine_autonomy model workflows; neither can produce a wrong result here.
+- (Gemini, Codex; already ruled in Local Review (Pre-Push) @ `3c5cd7d`) geodesy include/link export paths, missing SYSTEM, `sea_surface_estimator` listener audit, `launch_xml`, and the dropped hidden-listener negative check — ruled not findings there with evidence (ament_target_dependencies on Jazzy exported the same paths; one-argument listener on purpose; Plan Review F1/F5); nothing at `a1ecb86` changes that.
