@@ -188,3 +188,13 @@ Not findings, by checking: `ament_target_dependencies` on Jazzy (ament_cmake `ja
 - [ ] (suggestion) Declare `geometry_msgs` in mru_transform_interfaces (three srv files use `geometry_msgs/PointStamped`; it is in neither the manifest nor `rosidl_generate_interfaces` DEPENDENCIES and arrives only through geographic_msgs) — `mru_transform_interfaces/package.xml:14`, `mru_transform_interfaces/CMakeLists.txt:22`
 - [ ] (suggestion) Declare `<test_depend>rcutils</test_depend>`: test_map_origin includes `rcutils/logging.h` directly (pre-existing, same completeness class as cause 11) — `mru_transform/package.xml:36`, `mru_transform/test/test_map_origin.cpp:18`
 - [ ] (suggestion) The new test's per-test namespace is the same in every process, so two concurrent runs of test_map_origin on one machine (domain 87, LOCALHOST) can let one run's correct subscriber satisfy the other's `found` check (a false pass, not a flaky failure; CI jobs are isolated); add a per-process suffix (e.g. pid) to the namespace, or track in the follow-up issue — `mru_transform/test/test_map_origin.cpp:200`
+
+## Checkpoint
+**Status**: complete
+**When**: 2026-11-23 09:54 -05:00
+**By**: Claude Code Agent (claude-fable-5-2)
+**Decided-by**: host (the pre-push review approved round 1 with no must-fix; this repository has never had CI and Jazzy cannot be built on the development machine, so the pushed branch's first run is the first Jazzy evidence, and of the workflow itself)
+**After**: publish
+**Decision**: publish
+
+Read: the Local Review (Pre-Push) at `3c5cd7d`, verdict approved, ship recommended, three suggestions open: declare `geometry_msgs` in `mru_transform_interfaces` (`package.xml:14`, `CMakeLists.txt:22`); declare `<test_depend>rcutils</test_depend>` in `mru_transform` (`package.xml:36`); the new test's per-test namespace is the same in every process, so two concurrent runs on one machine could give a false pass (`test/test_map_origin.cpp:200`). They stay open and go through triage after publish, so the first CI run starts now. This is a project issue, so the host runs no full pre-commit pass. The pull request says `Part of #51`.
