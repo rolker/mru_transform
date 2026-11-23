@@ -167,3 +167,24 @@ Verification (Rolling only, this machine):
 - Repeat runs, separate processes, 0 failures: twist_rotation, water_line_offset, water_line_lever_arm, nav_source_selection 300 each (domains 42 to 45); subscribe_once 100 (46); map_origin 150 (87, its own); lifecycle_reconfigure 100 (89, its own).
 
 Not done: no Jazzy build or test (not installed here; the PR's Jazzy CI job is the first evidence, in particular for the helper's Jazzy branch and the new test); the workflow itself has not run; no vehicle run, bag replay or simulation.
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-11-23 09:53 -05:00
+**By**: Claude Code Agent (claude-opus-5-5)
+**Verdict**: approved
+
+**Branch**: feature/issue-51 at `3c5cd7d`
+**Base**: origin/rolling
+**Depth**: Standard (reason: 17 files, +663 -102, a new CI workflow and the one behaviour change in a navigation-path node; no security or cross-layer trigger for Deep)
+**Must-fix**: 0 | **Suggestions**: 3
+**Round**: 1 | **Ship**: recommended — no must-fix findings; remaining suggestions can be applied or tracked
+
+Listener and broadcaster (the one change to executable behaviour), checked line by line against `/opt/ros/rolling/include/tf2_ros/tf2_ros/transform_listener.hpp` and geometry2 `jazzy` `transform_listener.hpp` / `transform_broadcaster.hpp`: on Rolling `(buffer, *node, false)` selects the `RequiredInterfaces` constructor (implicit `NodeInterfaces(Node&)`), same node, `spin_thread=false`, the same default `DynamicListenerQoS`/`StaticListenerQoS` and QoS-override options as Jazzy's; on Jazzy `RequiredInterfaces` does not exist, so the `else` branch is the original expression (`NodeT&&` deduced as `const shared_ptr<Node>&`; `shared_ptr`'s `operator bool` is explicit, so the simplified constructor is not a candidate). The buffer clock is unchanged (`node_->get_clock()`), so `use_sim_time` is unchanged. `TransformBroadcaster(*node_)`: same defaults on both; Jazzy's `get_node_*_interface` accept a reference (already used as `*this` by two nodes in this package). Same behaviour on Rolling (built and tested) and on Jazzy by reading. The new test fails for both wrong forms (`node.get()`: no /tf subscriber on the node; `spin_thread` dropped: callback groups 1 to 2), as the implementer's mutations and an independent scratch compile showed.
+
+Not findings, by checking: `ament_target_dependencies` on Jazzy (ament_cmake `jazzy`) added include dirs PUBLIC without `$<BUILD_INTERFACE>` and without `SYSTEM` unless asked, and linked `_LIBRARIES` plain, so the replacement exports the same absolute paths as before (Gemini's must-fix and SYSTEM points are false positives); `sea_surface_estimator`/`chart_datum_node` use the one-argument listener on purpose; `launch_xml` and the dropped negative test clause are Plan Review F5 and F1. Workflow read step by step against a bare `ros:*-ros-core` container and the marine_ais and unh_marine_autonomy models: tools installed before use, `shell: bash` only where bash is needed, ROS sourced in each colcon step, rosdep needs only `ROS_DISTRO` (set by the image), closure of 4 packages, no `-r`, guard as in the models; geodesy at the same tree builds with tests on Jazzy in unh_marine_autonomy's Jazzy job (core.repos `ros2` == `f70b81a`). No system key missing from either manifest (system keys come in through marine_vertical_datum and geodesy).
+
+### Findings
+- [ ] (suggestion) Declare `geometry_msgs` in mru_transform_interfaces (three srv files use `geometry_msgs/PointStamped`; it is in neither the manifest nor `rosidl_generate_interfaces` DEPENDENCIES and arrives only through geographic_msgs) — `mru_transform_interfaces/package.xml:14`, `mru_transform_interfaces/CMakeLists.txt:22`
+- [ ] (suggestion) Declare `<test_depend>rcutils</test_depend>`: test_map_origin includes `rcutils/logging.h` directly (pre-existing, same completeness class as cause 11) — `mru_transform/package.xml:36`, `mru_transform/test/test_map_origin.cpp:18`
+- [ ] (suggestion) The new test's per-test namespace is the same in every process, so two concurrent runs of test_map_origin on one machine (domain 87, LOCALHOST) can let one run's correct subscriber satisfy the other's `found` check (a false pass, not a flaky failure; CI jobs are isolated); add a per-process suffix (e.g. pid) to the namespace, or track in the follow-up issue — `mru_transform/test/test_map_origin.cpp:200`
