@@ -79,3 +79,47 @@ Read: the Issue Review of 51 (well-scoped, right repository, no design change). 
 **Plan**: `.agent/work-plans/issue-51/plan.md` at `de4e3c5`
 
 Eight commits on `rolling`, planned from a Rolling baseline build and a scratch copy that builds and passes (97 tests, 0 failures, no intermittent failure in 100 to 300 runs per binary): geodesy CMake and 1.0.7 floor (causes 1, 8), tf2 `.hpp` includes (2), a new cause found by the build in the `tf2_ros` listener and broadcaster node constructors (with a mutation-checked test), manifest order (9), undeclared dependencies per package (11), the CI workflow, and retiring the old `upstream.repos` scaffold. Backport is the same eight commits by cherry-pick.
+
+## Plan Review
+**Status**: complete
+**When**: 2026-11-23 09:27 -05:00
+**By**: Claude Code Agent (claude-opus-5-5)
+**Verdict**: needs-work
+
+**Issue**: #51 — Build on ROS 2 Rolling: port mru_transform, add a rolling branch and CI
+**Plan**: `.agent/work-plans/issue-51/plan.md` at `de4e3c5`
+**Branch**: `feature/issue-51`
+
+### Evaluation
+
+| Dimension | Verdict | Notes |
+|---|---|---|
+| Scope | Good | Eight commits, two packages plus CI; every change is a build, manifest or CI fix. The `ament_lint_common` hold-back is sound: CMake never names it (`ament_lint_auto_find_test_dependencies` only picks up linters the manifest declares), so it is not an undeclared key; declaring it would add 293 failing tests, a behaviour change, not a port fix. |
+| Issue alignment | Good | Every Issue Review action is taken or declined per the Checkpoint. Serves: "None: mru_transform has no goals or design document; it is the root-level port of rolker/unh_marine_autonomy#415 (the project building on ROS 2 Rolling and Jazzy)." Not flagged (a project is not asked to keep goals). |
+| File targeting | Good | Listener/broadcaster constructions checked in both packages and all tests: only `src/mru_transform.cpp:93,99` take a node; `sea_surface_estimator.hpp:191` and `chart_datum_node.hpp:256` use the one-argument `TransformListener(*tf_buffer_)` (the same overload on both distros, own node by design, per their comments) and `TransformBroadcaster(*this)`. No other construction in `test/` or `tide_copier`. |
+| Consequences | Needs work | One launch dependency missed (finding 5); retirement of `upstream.repos` affects nothing else (cube_bathymetry's industrial_ci reads its own `upstream.repos`, industrial_ci does not recurse into a dependency's). |
+| Principle alignment | Needs work | Test what breaks: the new test's negative clause is domain-global and can fail from another repository's test (finding 1); the dropped `spin_thread=false` is not covered (finding 2). |
+| ADR compliance | Good | ADR-0013 only; records on `rolling`, not backported. |
+| ROS conventions | Good | Rolling form `TransformListener(buf, *node_, false)` → `NodeInterfaces` from `Node&` (implicit, `node_interfaces.hpp:150`), same default `DynamicListenerQoS`/`StaticListenerQoS` and QoS-override options as Jazzy's `NodeT&&` constructor, `static_only=false`, subscriptions created through the node's parameters/topics interfaces (so the same `qos_overrides./tf...` parameters); the buffer keeps `node_->get_clock()`, so `use_sim_time` is unchanged. `TransformBroadcaster(*node_)`: Rolling takes `RequiredInterfaces` from `Node&`; Jazzy's `NodeT&&` calls `get_node_*_interface(node)`, which accepts a `Node&` (rclcpp `jazzy` `test_get_node_interfaces.cpp:84`), and this package already compiles `TransformBroadcaster(*this)` on Jazzy. |
+
+### Findings
+
+1. **[Principle alignment — Test what breaks]** (medium) The planned `TransformListenerSubscribesFromTheNodeItself` asserts that no `transform_listener_impl*` node subscribes to `/tf` in the graph. That check is domain-wide, and `test_map_origin` runs on `ROS_DOMAIN_ID=87` with `LOCALHOST` discovery, the same domain as rolker/cube_bathymetry's `test_node_lifecycle` (`cube_bathymetry/CMakeLists.txt:473`), whose live node constructs `TransformListener(*tf_buffer_, this)` (`cube_bathymetry_node.hpp:522`), which on Rolling becomes the bool overload and creates a `transform_listener_impl_<hex>` node. In a whole-workspace `colcon test` (packages run in parallel) the new test can then fail with nothing wrong in mru_transform. The positive clause (a `/tf` subscription whose node is the node under test, in its per-test namespace) already fails for the `node_.get()` mutation on its own. Resolution: drop the negative clause, or restrict it to something this process owns; and note the shared domain 87 in the follow-up issue.
+2. **[Principle alignment — Test what breaks]** (medium) The plan says the helper picks `*node` or the `shared_ptr` but does not say it passes the third argument `false`, and the test cannot tell: `TransformListener(buf, *node_)` (default `spin_thread = true`) subscribes from the node itself and passes the test, yet adds a dedicated executor thread and callback group and sets `buffer.setUsingDedicatedThread(true)`, which changes `canTransform`/`lookupTransform` timeout behaviour in the navigation path. Resolution: state that the helper takes and forwards `spin_thread = false`, and add an assertion that fails if it is dropped (e.g. `isUsingDedicatedThread()` on the buffer via a test accessor, or the node's callback-group count unchanged by the listener). Checked here: the reference form with `false` on Rolling leaves `isUsingDedicatedThread()` false.
+3. **[ROS conventions]** (low) Make the helper's listener type a template parameter (e.g. `template<class ListenerT = tf2_ros::TransformListener>`), detecting `typename ListenerT::RequiredInterfaces` with `std::void_t`, so both `if constexpr` branches are dependent. With a non-dependent `tf2_ros::TransformListener` the discarded branch is still parsed and its non-dependent calls resolved at definition time; through `std::make_shared` that happens to compile (checked with GCC 15 against `/opt/ros/rolling` headers and a Jazzy-shaped mock), but a direct `new`/constructor call in the discarded branch would be a hard error on Rolling. Dependent branches remove the question on both distros and compilers.
+4. **[File targeting — CI]** (low) The workflow description leaves out details the two models carry and an implementer would otherwise guess: `shell: bash` on the step that uses `set -euo pipefail` (the container's default `sh` is dash); `bash -c 'source /opt/ros/<distro>/setup.bash && …'` on the colcon build, test and test-result steps (no step sources ROS in a `ros:*-ros-core` container otherwise); `permissions: contents: read`; `DEBIAN_FRONTEND=noninteractive` on apt and rosdep. Resolution: embed the YAML in the plan, or list these.
+5. **[Consequences — cause 11]** (low) `mru_transform/launch/ixblue_example.launch.xml` is a ROS 2 XML launch file (`exec=`, `$(find-pkg-share …)`), which needs `launch_xml` at run time; step 6 declares `launch` and `launch_ros` only. Add `<exec_depend>launch_xml</exec_depend>` (it is in `ros-core`, so CI cannot show it missing, as with the others). `launch/test_posmv.launch` is a ROS 1 file (`<rosparam>`, `type=`); leave it and add it to the follow-up list.
+6. **[Consequences — step 8]** (low) The stated reason that `upstream.repos` "pins `geographic_info` at `ros2` (a branch without the `1.0.7` fix)" is wrong today: `gh api repos/ros-geographic-info/geographic_info/compare/f70b81a…ros2` reports `identical`, and `geodesy/package.xml` on `ros2` is 1.0.7. Retiring is still right (nothing reads the files; `ros2` is a moving branch; unh_marine_autonomy is pinned to `jazzy` for both distros), but correct the commit message and PR text.
+
+### Summary
+
+The plan is sound and evidenced; the Rolling listener/broadcaster fix maps to the same node, QoS and threading as the original on both distros, and each commit builds on Jazzy alone (by reading) while 1 to 3 build on Rolling only together, which the backport cherry-picks in order anyway. The new test needs two adjustments before it guards the one behavioural change properly (findings 1 and 2); the rest are small corrections.
+
+### Recommended Actions
+
+- [ ] Drop or scope the domain-wide `transform_listener_impl*` assertion in the new test; note the shared `ROS_DOMAIN_ID=87` with cube_bathymetry in the follow-up issue.
+- [ ] State that the listener helper forwards `spin_thread = false`, and assert no dedicated listener thread in the test.
+- [ ] Make the helper's listener type a template parameter so both branches are dependent.
+- [ ] Embed the workflow YAML in the plan or list `shell: bash`, the per-step ROS sourcing, `permissions` and `DEBIAN_FRONTEND`.
+- [ ] Add `<exec_depend>launch_xml</exec_depend>` to `mru_transform/package.xml` in step 6; list `launch/test_posmv.launch` (ROS 1) in the follow-up.
+- [ ] Correct step 8's reason about the `ros2` branch.
