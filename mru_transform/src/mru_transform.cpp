@@ -14,7 +14,50 @@
 #include <tf2/utils.hpp>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 
+#include <memory>
+#include <type_traits>
+
 namespace mru_transform{
+
+namespace
+{
+
+// Whether ListenerT has Rolling's NodeInterfaces constructor, told by the
+// nested RequiredInterfaces type that only Rolling's tf2_ros declares.
+template<class ListenerT, class = void>
+struct TakesNodeInterfaces : std::false_type {};
+
+template<class ListenerT>
+struct TakesNodeInterfaces<ListenerT, std::void_t<typename ListenerT::RequiredInterfaces>>
+  : std::true_type {};
+
+// Builds a TransformListener that subscribes from `node` itself, on both
+// Jazzy and Rolling (#51; rolker/unh_marine_autonomy#415 cause 14).
+//
+// Rolling's tf2_ros takes the node as NodeInterfaces, built from a node
+// reference; Jazzy's takes a pointer-like node. Passing the shared_ptr does
+// not compile on Rolling. Passing node.get() DOES compile there, and is
+// wrong: the pointer converts to the bool spin_thread of the simplified
+// constructor, so the listener creates a node of its own with its own spin
+// thread instead of using this one. ListenerT is a template parameter so
+// both branches below are dependent and the one not taken is never resolved.
+//
+// spin_thread is forwarded, not defaulted: tf2_ros defaults it to true, which
+// adds a callback group and executor thread and marks the buffer as using a
+// dedicated thread (changing canTransform/lookupTransform timeout behaviour).
+// test_map_origin's TransformListenerSubscribesFromTheNodeItself checks both.
+template<class ListenerT = tf2_ros::TransformListener>
+std::shared_ptr<ListenerT> makeTransformListener(
+  tf2::BufferCore & buffer, const rclcpp::Node::SharedPtr & node, bool spin_thread)
+{
+  if constexpr (TakesNodeInterfaces<ListenerT>::value) {
+    return std::make_shared<ListenerT>(buffer, *node, spin_thread);
+  } else {
+    return std::make_shared<ListenerT>(buffer, node, spin_thread);
+  }
+}
+
+}  // namespace
 
 MRUTransform::MRUTransform(rclcpp::Node::SharedPtr node)
 : sensors_(*node, true),
@@ -90,13 +133,15 @@ MRUTransform::MRUTransform(rclcpp::Node::SharedPtr node)
   node_->get_parameter("odom_topic", odom_topic_);
 
 
-  broadcaster_ = std::make_shared<tf2_ros::TransformBroadcaster>(node_);
+  // A node reference builds on both distros (Rolling takes NodeInterfaces,
+  // Jazzy's get_node_*_interface accept a reference), as in chart_datum_node.
+  broadcaster_ = std::make_shared<tf2_ros::TransformBroadcaster>(*node_);
 
   odom_pub_ = node_->create_publisher<nav_msgs::msg::Odometry>(odom_topic_, 50);
 
   // listener used to determine sensor to baselink transforms
   tf_buffer_ = std::make_unique<tf2_ros::Buffer>(node_->get_clock());
-  tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_, node_, false);
+  tf_listener_ = makeTransformListener(*tf_buffer_, node_, false);
 
 
   // Initialize the reset map frame service
