@@ -227,3 +227,13 @@ Suggestion 1 checked against `rosidl_generate_interfaces.cmake` (Rolling): a DEP
 - (Gemini) `Test results` with `if: always()` errors when `../ws` is missing — that happens only when an earlier step already failed the job, so it adds a second red step but never changes the verdict.
 - (Gemini) Unquoted `$paths` and `actions/checkout@v6` by major tag — colcon paths in the container are fixed, space-free `src/...` paths, and the GitHub-owned checkout action by major tag matches the marine_ais and unh_marine_autonomy model workflows; neither can produce a wrong result here.
 - (Gemini, Codex; already ruled in Local Review (Pre-Push) @ `3c5cd7d`) geodesy include/link export paths, missing SYSTEM, `sea_surface_estimator` listener audit, `launch_xml`, and the dropped hidden-listener negative check — ruled not findings there with evidence (ament_target_dependencies on Jazzy exported the same paths; one-argument listener on purpose; Plan Review F1/F5); nothing at `a1ecb86` changes that.
+
+## Checkpoint
+**Status**: complete
+**When**: 2026-11-23 09:59 -05:00
+**By**: Claude Code Agent (claude-fable-5-2)
+**Decided-by**: host (three valid suggestions are open and each has a small, named fix; merging past open findings is the owner's answer only)
+**After**: findings
+**Decision**: address
+
+Read: the Integrated Review of pull request 52 at `a1ecb86`: three valid suggestions, four false positives, CI all-pass on the workflow's first run (Jazzy and Rolling each: 4 packages built, 97 tests, 0 errors, 0 failures; the new listener test passing on both; rosdep without `-r` satisfied). All three are addressed: (1) `geometry_msgs` declared in `mru_transform_interfaces` (`package.xml`, `find_package`, `rosidl_generate_interfaces` DEPENDENCIES); (2) `<test_depend>rcutils</test_depend>` in `mru_transform`; (3) a per-process suffix on the test namespace in `make_node` (`test/test_map_origin.cpp:200`), so two runs on one machine cannot answer each other.
