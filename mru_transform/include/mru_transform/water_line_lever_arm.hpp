@@ -5,7 +5,7 @@
 #include <string>
 
 #include <geometry_msgs/msg/transform_stamped.hpp>
-#include <tf2/LinearMath/Vector3.h>
+#include <tf2/LinearMath/Vector3.hpp>
 #include <tf2_ros/buffer.h>
 
 namespace mru_transform
